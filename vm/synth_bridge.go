@@ -585,7 +585,23 @@ func callMethod(
 	rs := m.captureRunnerState()
 	runner := rs.acquireRunner()
 	defer rs.releaseRunner(runner)
-	return runner.callPooled(fval, methodSig, args)
+	out, err := runner.callPooled(fval, methodSig, args)
+	if isProgramPanic(err) {
+		// Raise the program's panic (or os.Exit) here rather than in each shape
+		// handler, several of which turn an error into zero results: a panic
+		// in a method native code calls propagates through it, as in Go.
+		rs.raiseCallback(err)
+		return zeroResults(methodSig), nil
+	}
+	return out, err
+}
+
+// isProgramPanic reports whether err, returned by a callback's run, is the
+// program panicking or exiting rather than a failure to dispatch it.
+func isProgramPanic(err error) bool {
+	var pe *PanicError
+	var ce CleanExit
+	return errors.As(err, &pe) || errors.As(err, &ce)
 }
 
 func (m *Machine) callPromotedConcrete(

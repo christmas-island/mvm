@@ -240,20 +240,28 @@ func main() {
 // native caller and interpreted recover catches it, unchanged.
 func TestCallbackPanicSameGoroutineRecoverable(t *testing.T) {
 	r := evalCallback(t, `package main
-import ("fmt"; "sort"; "sync")
+import ("encoding/json"; "fmt"; "sort"; "sync")
+type vals []int
+func (v vals) Len() int { return len(v) }
+func (v vals) Less(i, j int) bool { panic("less method") }
+func (v vals) Swap(i, j int) {}
+type mj int
+func (mj) MarshalJSON() ([]byte, error) { panic("marshal") }
 func try(name string, f func()) {
 	defer func() { fmt.Println(name, recover()) }()
 	f()
 }
 func main() {
 	try("slice", func() { sort.Slice([]int{2, 1}, func(i, j int) bool { panic("less func") }) })
+	try("sort", func() { sort.Sort(vals{2, 1}) })
+	try("json", func() { json.Marshal(mj(1)) })
 	var once sync.Once
 	try("once", func() { once.Do(func() { panic("once") }) })
 }`)
 	if r.err != nil {
 		t.Fatalf("Eval: %v\n%s", r.err, r.out)
 	}
-	for _, want := range []string{"slice less func", "once once"} {
+	for _, want := range []string{"slice less func", "sort less method", "json", "once once"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("output lacks %q:\n%s", want, r.out)
 		}
