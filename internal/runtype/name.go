@@ -2,8 +2,26 @@ package runtype
 
 import (
 	"encoding/binary"
+	"sync"
 	"unsafe"
 )
+
+// names interns encoded name records by content. A record is immutable once
+// built, so every type with the same name shares one copy, as the linker
+// shares name data in a binary: a reload of the same code then adds no name
+// bytes and no reflect-offset entries for them (addReflectOff dedups by
+// pointer). Both would otherwise be kept for good. The table holds each
+// distinct record once, for the life of the process.
+var names sync.Map // string (record bytes) -> *byte (into that string's data)
+
+func internName(buf []byte) abiName {
+	if p, ok := names.Load(string(buf)); ok {
+		return abiName{Bytes: p.(*byte)}
+	}
+	s := string(buf)
+	p, _ := names.LoadOrStore(s, unsafe.StringData(s))
+	return abiName{Bytes: p.(*byte)}
+}
 
 // encodeName produces an internal/abi.Name-format byte record.
 // Format: one flag byte (bit0=exported, bit1=has-tag, bit2=has-pkgpath,
@@ -23,7 +41,7 @@ func encodeName(name string, exported bool) abiName {
 	buf[0] = flags
 	copy(buf[1:], lenBuf[:lenSize])
 	copy(buf[1+lenSize:], name)
-	return abiName{Bytes: &buf[0]}
+	return internName(buf)
 }
 
 // Sets the embedded bit reflect.StructOf refuses on an unexported embed (anon+PkgPath).
@@ -55,7 +73,7 @@ func encodeFieldName(name, tag string, exported, embedded bool) abiName {
 		p += copy(buf[p:], tLen[:tSize])
 		copy(buf[p:], tag)
 	}
-	return abiName{Bytes: &buf[0]}
+	return internName(buf)
 }
 
 // encodeNamePkg is encodeName with an embedded import path (abi.Name bit2), so
@@ -80,5 +98,5 @@ func encodeNamePkg(name string, exported bool, pkgPath string) abiName {
 	copy(buf[1:], lenBuf[:lenSize])
 	copy(buf[1+lenSize:], name)
 	binary.NativeEndian.PutUint32(buf[1+lenSize+len(name):], uint32(pkgOff))
-	return abiName{Bytes: &buf[0]}
+	return internName(buf)
 }
