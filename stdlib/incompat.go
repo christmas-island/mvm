@@ -412,8 +412,6 @@ var Incompat = map[string]map[string]string{
 var GenericOnly = map[string]bool{
 	"crypto/hkdf":   true,
 	"crypto/pbkdf2": true,
-	"unique":        true,
-	"weak":          true,
 }
 
 // IsGenericOnly reports whether pkgPath is a generic-only stub package.

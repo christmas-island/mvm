@@ -144,7 +144,7 @@ Phase 3 grows this from `fmt` toward all dispatchers: the mirror also ships
 `base64`, `hex`, ...), and `net/url`, `net/netip`. Their internal floor is
 mirrored with pure-Go overlays where upstream is asm/linkname/runtime-coupled:
 `internal/bytealg`, `internal/godebug` (reports defaults), `unique` (a map-based
-interner, no weak GC). Floor that can't be mirrored is re-exported under its
+interner, no weak GC), `weak` (a strong pointer with the upstream API). Floor that can't be mirrored is re-exported under its
 import path in `stdlib/internal_stubs.go` (`internal/abi.NoEscape`,
 `internal/reflectlite`).
 
