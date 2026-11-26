@@ -3,6 +3,8 @@
 package stubs
 
 import (
+	"reflect"
+
 	"github.com/mvm-sh/mvm/internal/runtype"
 )
 
@@ -10,7 +12,7 @@ import (
 // The returned release nils this call's slot handlers (which capture *Machine);
 // callers tie it to the Machine via Interp.Close. nil only when err != nil.
 func FillMethods(res *runtype.Reservation, methods []Method) (release func(), err error) {
-	stubs, releases, err := acquireSlots(methods)
+	stubs, releases, err := acquireSlots(res.Type(), methods)
 	if err != nil {
 		return nil, err
 	}
@@ -38,12 +40,13 @@ func runReleases(releases []func()) {
 }
 
 // acquireSlots claims one slot per method, returning slot PCs and release closures.
-// On mid-batch failure it releases what it claimed; slot indices stay consumed.
-func acquireSlots(methods []Method) (stubs []uintptr, releases []func(), err error) {
+// Each slot is classed by recv and its method for later reuse (see slotClass).
+// On mid-batch failure it releases what it claimed.
+func acquireSlots(recv reflect.Type, methods []Method) (stubs []uintptr, releases []func(), err error) {
 	stubs = make([]uintptr, len(methods))
 	releases = make([]func(), 0, len(methods))
 	for i, m := range methods {
-		pc, release, err := acquireSlot(m)
+		pc, release, err := acquireSlot(m, newSlotClass(recv, m))
 		if err != nil {
 			runReleases(releases)
 			return nil, nil, err

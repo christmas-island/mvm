@@ -13,17 +13,21 @@ type HandlerS5 = func(recv unsafe.Pointer, target any) bool
 type methodDescS5 struct{ handler HandlerS5 }
 
 var (
-	slotPoolS5 [poolSizeS5]methodDescS5
-	nextSlotS5 atomic.Uint32
+	slotPoolS5  [poolSizeS5]methodDescS5
+	nextSlotS5  atomic.Uint32
+	freeSlotsS5 freeSlots
 )
 
-func acquireSlotS5(h HandlerS5) (pc uintptr, release func(), err error) {
-	n := nextSlotS5.Add(1) - 1
-	if n >= poolSizeS5 {
-		return 0, nil, errPoolFmt("S5", poolSizeS5)
+func acquireSlotS5(h HandlerS5, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS5.take(c)
+	if !ok {
+		n = nextSlotS5.Add(1) - 1
+		if n >= poolSizeS5 {
+			return 0, nil, errPoolFmt("S5", poolSizeS5)
+		}
 	}
 	slotPoolS5[n].handler = h
-	return stubsS5[n], func() { slotPoolS5[n].handler = nil }, nil
+	return stubsS5[n], func() { slotPoolS5[n].handler = nil; freeSlotsS5.put(c, n) }, nil
 }
 
 // SlotsUsedS5 reports how many S5 stub slots have been consumed.

@@ -23,13 +23,14 @@ type CoreFunc = func(recv unsafe.Pointer, pw []unsafe.Pointer, sw []uint64, fw [
 
 // wordPool is one word-shape's stub-PC pool and parallel slot table.
 // The generated pool_w*.go file owns the backing arrays and registers a *wordPool
-// at init; acquireWordSlot claims slots monotonically like the typed shapes.
+// at init; acquireWordSlot claims slots like the typed shapes.
 type wordPool struct {
 	next  *atomic.Uint32
 	cap   uint32
 	stubs []uintptr
 	slots []CoreFunc
 	name  string
+	free  freeSlots
 }
 
 // wordPools maps a word-shape key (e.g. "pi_pppp") to its *wordPool.
@@ -48,19 +49,22 @@ func HasWordShape(key string) bool {
 	return ok
 }
 
-// acquireWordSlot claims a free slot in the pool for key, storing core and
+// acquireWordSlot claims a slot in the pool for key, storing core and
 // returning the stub PC for Ifn/Tfn plus a release closure (mirrors acquireSlot
 // for the typed shapes).
-func acquireWordSlot(key string, core CoreFunc) (pc uintptr, release func(), err error) {
+func acquireWordSlot(key string, core CoreFunc, c *slotClass) (pc uintptr, release func(), err error) {
 	v, ok := wordPools.Load(key)
 	if !ok {
 		return 0, nil, fmt.Errorf("stubs: unknown word shape %q", key)
 	}
 	p := v.(*wordPool)
-	n := p.next.Add(1) - 1
-	if n >= p.cap {
-		return 0, nil, errPoolFmt(p.name, p.cap)
+	n, ok := p.free.take(c)
+	if !ok {
+		n = p.next.Add(1) - 1
+		if n >= p.cap {
+			return 0, nil, errPoolFmt(p.name, p.cap)
+		}
 	}
 	p.slots[n] = core
-	return p.stubs[n], func() { p.slots[n] = nil }, nil
+	return p.stubs[n], func() { p.slots[n] = nil; p.free.put(c, n) }, nil
 }

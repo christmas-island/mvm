@@ -204,7 +204,8 @@ CI (the `wasm` job runs the synth-dispatch and interptest suites under wasip1).
   and `complex64` now classify on both arches -- register `g`, wasm `i`.)
 - The path is gated to 64-bit little-endian (amd64/arm64/.../wasm); on 32-bit or
   big-endian targets only the typed shapes work.
-- The word pools are finite and consumed monotonically like the typed pools.
+- The word pools are finite and consumed like the typed pools (monotonically,
+  except for slots `Interp.Close` returns; see docs/modules/stubs.md).
   Each slot is one generated function, so the ~53k of them are about half the wasm
   binary. The wasm target carries **none** of them: all `pool_*.go` are
   `//go:build !wasm` and every interpreted method shares one trap PC

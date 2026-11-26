@@ -197,7 +197,7 @@ func TestAcquireSlotsPartialRollback(t *testing.T) {
 		{Name: "C", Exported: true, Sig: stringerSig, Shape: ShapeS1, Handler: "not a func"},
 	}
 	beforeUsed := SlotsUsedS1()
-	_, _, err := acquireSlots(methods)
+	_, _, err := acquireSlots(nil, methods)
 	if err == nil {
 		t.Fatal("expected error from invalid handler type")
 	}

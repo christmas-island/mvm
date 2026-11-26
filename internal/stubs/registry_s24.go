@@ -13,17 +13,21 @@ type HandlerS24 = func(recv unsafe.Pointer) time.Time
 type methodDescS24 struct{ handler HandlerS24 }
 
 var (
-	slotPoolS24 [poolSizeS24]methodDescS24
-	nextSlotS24 atomic.Uint32
+	slotPoolS24  [poolSizeS24]methodDescS24
+	nextSlotS24  atomic.Uint32
+	freeSlotsS24 freeSlots
 )
 
-func acquireSlotS24(h HandlerS24) (pc uintptr, release func(), err error) {
-	n := nextSlotS24.Add(1) - 1
-	if n >= poolSizeS24 {
-		return 0, nil, errPoolFmt("S24", poolSizeS24)
+func acquireSlotS24(h HandlerS24, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS24.take(c)
+	if !ok {
+		n = nextSlotS24.Add(1) - 1
+		if n >= poolSizeS24 {
+			return 0, nil, errPoolFmt("S24", poolSizeS24)
+		}
 	}
 	slotPoolS24[n].handler = h
-	return stubsS24[n], func() { slotPoolS24[n].handler = nil }, nil
+	return stubsS24[n], func() { slotPoolS24[n].handler = nil; freeSlotsS24.put(c, n) }, nil
 }
 
 // SlotsUsedS24 reports how many S24 stub slots have been consumed.

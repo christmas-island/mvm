@@ -246,8 +246,9 @@ func (m *Machine) fillSynthMethods(res *runtype.Reservation, methods []stubs.Met
 }
 
 // ReleaseSynthMethods nils the stub-pool handler slots this Machine acquired so a
-// disposed interpreter becomes collectable (slot indices stay consumed). Do not
-// dispatch its synth methods after. Backs Interp.Close; no-op on wasm.
+// disposed interpreter becomes collectable, and returns the slots for reuse by the
+// same methods of layout-identical types (an interpreter reloading the same code).
+// Do not dispatch its synth methods after. Backs Interp.Close; no-op on wasm.
 func (m *Machine) ReleaseSynthMethods() {
 	m.synthReleasesMu.Lock()
 	releases := m.synthReleases

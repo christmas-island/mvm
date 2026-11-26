@@ -13,17 +13,21 @@ type HandlerS23 = func(recv unsafe.Pointer) fs.FileMode
 type methodDescS23 struct{ handler HandlerS23 }
 
 var (
-	slotPoolS23 [poolSizeS23]methodDescS23
-	nextSlotS23 atomic.Uint32
+	slotPoolS23  [poolSizeS23]methodDescS23
+	nextSlotS23  atomic.Uint32
+	freeSlotsS23 freeSlots
 )
 
-func acquireSlotS23(h HandlerS23) (pc uintptr, release func(), err error) {
-	n := nextSlotS23.Add(1) - 1
-	if n >= poolSizeS23 {
-		return 0, nil, errPoolFmt("S23", poolSizeS23)
+func acquireSlotS23(h HandlerS23, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS23.take(c)
+	if !ok {
+		n = nextSlotS23.Add(1) - 1
+		if n >= poolSizeS23 {
+			return 0, nil, errPoolFmt("S23", poolSizeS23)
+		}
 	}
 	slotPoolS23[n].handler = h
-	return stubsS23[n], func() { slotPoolS23[n].handler = nil }, nil
+	return stubsS23[n], func() { slotPoolS23[n].handler = nil; freeSlotsS23.put(c, n) }, nil
 }
 
 // SlotsUsedS23 reports how many S23 stub slots have been consumed.

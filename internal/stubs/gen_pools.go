@@ -19,8 +19,10 @@ import (
 )
 
 // poolSize is the default per-shape slot count. Slots are consumed
-// monotonically (one per synthesized method, never reclaimed), so a shape's
-// size must exceed the most distinct attaches a single process performs.
+// one per synthesized method and only come back when the interpreter that
+// holds them is closed, for reuse by the same method of a layout-identical
+// type (recycle.go), so a shape's size must exceed the most distinct attaches
+// live at once in a process.
 // 256 covers every shape except S1 (Stringer/Error), whose cumulative attaches
 // in the interp test suite exceed it; S1 carries a larger Size below.
 const poolSize = 256
@@ -165,7 +167,7 @@ var wordShapes = []wordShape{
 	{Params: "pppii", Results: "pp", Size: 64},
 	{Params: "pppii", Results: "ppp", Size: 64},
 	{Params: "pppipii", Results: "", Size: 64},
-	{Params: "pppp", Results: "", Size: 64},
+	{Params: "pppp", Results: "", Size: 256}, // goldmark/extension (GFM) attaches ~82 in one load
 	{Params: "pppp", Results: "ppi", Size: 64},
 	{Params: "ppppp", Results: "", Size: 64},
 	{Params: "pppppii", Results: "i", Size: 128},
