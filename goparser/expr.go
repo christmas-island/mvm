@@ -59,7 +59,7 @@ func (p *Parser) parseExpr(in Tokens, typeStr string) (out Tokens, err error) {
 			// A body-less func is a type expression (e.g. the `(func(int,int) bool)`
 			// of a conversion): emit it as a type ident so the next ParenBlock is the call.
 			bi := in[i:].LastIndex(lang.BraceBlock)
-			if bi < 0 {
+			if bi < 0 || !p.funcHasBody(in[i:]) {
 				typ, n, terr := p.parseTypeExpr(in[i:])
 				if terr != nil {
 					return out, terr

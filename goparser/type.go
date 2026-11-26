@@ -789,6 +789,17 @@ func (p *Parser) hasFirstParam(in Tokens) bool {
 	return false
 }
 
+// funcHasBody reports whether the func at in[0] is a literal, i.e. a body
+// follows its signature, rather than a type whose last result is a brace type
+// (func() interface{}, func() struct{}).
+func (p *Parser) funcHasBody(in Tokens) bool {
+	saveTypeOnly, saveRegFuncSig := p.typeOnly, p.regFuncSig
+	p.typeOnly, p.regFuncSig = true, false
+	_, n, err := p.parseTypeExpr(in)
+	p.typeOnly, p.regFuncSig = saveTypeOnly, saveRegFuncSig
+	return err != nil || (n < len(in) && in[n].Tok == lang.BraceBlock)
+}
+
 // placeholderStructElem returns the forward placeholder struct t is, or is an
 // array (possibly nested) of, else nil.
 func placeholderStructElem(t *mtype.Type) *mtype.Type {
