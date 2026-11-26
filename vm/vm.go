@@ -503,14 +503,17 @@ const (
 
 // NewMachine returns a pointer on a new Machine.
 func NewMachine() *Machine {
-	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner()}}
+	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner(), cb: &callbackPanics{}}}
 }
 
 // lifetime is a token whose collection means no machine of an interpreter
 // is left: neither the root, a runner a native callback may still borrow,
 // nor an interpreted goroutine. It carries the interpreter's derive.Owner,
 // active while any of its machines runs.
-type lifetime struct{ owner *derive.Owner }
+type lifetime struct {
+	owner *derive.Owner
+	cb    *callbackPanics // panics in callbacks nothing would recover (callback_panic.go)
+}
 
 // Owner returns the derive.Owner that records m's interpreter's entries in
 // the global type caches (nil for a Machine not made by NewMachine).
@@ -5101,11 +5104,8 @@ func (m *Machine) buildCallFunc(fval Value, fnType reflect.Type) reflect.Value {
 		defer runtime.KeepAlive(ref)
 		out, err := runner.callPooled(fval, fnType, args)
 		if err != nil {
-			var pe *PanicError
-			if errors.As(err, &pe) {
-				panic(reraisedPanic{pe}) // raw value for native recover; see reraisedPanic
-			}
-			panic(err)
+			rs.raiseCallback(err)
+			return zeroResults(fnType)
 		}
 		return out
 	})
@@ -5145,7 +5145,8 @@ func (m *Machine) buildMethodExprFunc(codeAddr int, exprType reflect.Type) refle
 		defer rs.releaseRunner(runner)
 		out, err := runner.callPooled(clo, innerType, args[1:])
 		if err != nil {
-			panic(err)
+			rs.raiseCallback(err)
+			return zeroResults(exprType)
 		}
 		return out
 	})
@@ -5309,12 +5310,29 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 		}
 		coerceInterfaceArgs(in, rv.Type())
 		m.wrapFuncArgs(in, args, rv.Type())
+		call := rv.Call
 		if spread {
 			in[len(in)-1] = m.unwrapVariadicIface(in[len(in)-1])
-			go func() { rv.CallSlice(in) }()
-		} else {
-			go func() { rv.Call(in) }()
+			call = rv.CallSlice
 		}
+		if m.fault == nil {
+			m.fault = newGoroutineFault(m.err, m.faultContinue)
+		}
+		fault := m.fault
+		go func() {
+			// A panic here (most often raised by a callback the native
+			// function ran) is this goroutine's fault, as on an interpreted
+			// goroutine; Go would end the process.
+			g := gid()
+			mvmBases.Store(g, struct{}{})
+			defer mvmBases.Delete(g)
+			defer func() {
+				if r := recover(); r != nil {
+					fault.record(nativeGoPanic(r))
+				}
+			}()
+			call(in)
+		}()
 		return false
 	}
 
