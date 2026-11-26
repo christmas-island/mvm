@@ -173,8 +173,11 @@ type freeSlots struct {
 	mu    sync.Mutex
 	m     map[string][]uint32
 
-	retired []uint32 // guarded by mu
-	swept   []uint32 // guarded by mu
+	// retired maps each retired slot to its class key ("" if it has none);
+	// a keyed retired slot is also in m, so a reload of the same code takes it
+	// without a sweep, exactly as a parked slot.
+	retired map[uint32]string // guarded by mu
+	swept   []uint32          // guarded by mu
 
 	// Set once at init by the generated pool file (setPool).
 	name  string
@@ -233,7 +236,38 @@ func (f *freeSlots) takeParked(c *slotClass) (uint32, bool) {
 		f.m[key] = s[:len(s)-1]
 	}
 	f.n.Add(-1)
+	delete(f.retired, n) // live again: no longer the sweep's
 	return n, true
+}
+
+// takeRetired removes and returns every retired slot, unparking the keyed
+// ones from m. The caller holds f.mu.
+func (f *freeSlots) takeRetired() []uint32 {
+	if len(f.retired) == 0 {
+		return nil
+	}
+	ns := make([]uint32, 0, len(f.retired))
+	for n, key := range f.retired {
+		ns = append(ns, n)
+		if key == "" {
+			continue
+		}
+		s := f.m[key]
+		for i, x := range s {
+			if x == n {
+				s = append(s[:i], s[i+1:]...)
+				f.n.Add(-1)
+				break
+			}
+		}
+		if len(s) == 0 {
+			delete(f.m, key)
+		} else {
+			f.m[key] = s
+		}
+	}
+	f.retired = nil
+	return ns
 }
 
 func (f *freeSlots) takeSwept() (uint32, bool) {
@@ -252,24 +286,29 @@ func (f *freeSlots) takeSwept() (uint32, bool) {
 }
 
 // put parks slot n for reuse by c's class; a slot with no class is retired
-// for good. A class marked retire (CloseAndRelease) retires n for the sweep.
+// for good. A class marked retire (CloseAndRelease) retires n for the sweep
+// and, if it has a key, parks it too until the sweep takes it.
 func (f *freeSlots) put(c *slotClass, n uint32) {
-	if c != nil && c.retire {
-		f.mu.Lock()
-		f.retired = append(f.retired, n)
-		f.mu.Unlock()
-		return
-	}
 	key := c.getKey()
-	if key == "" {
+	retire := c != nil && c.retire
+	if key == "" && !retire {
 		return
 	}
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	if retire {
+		if f.retired == nil {
+			f.retired = map[uint32]string{}
+		}
+		f.retired[n] = key
+	}
+	if key == "" {
+		return
+	}
 	if f.m == nil {
 		f.m = map[string][]uint32{}
 	}
 	f.m[key] = append(f.m[key], n)
-	f.mu.Unlock()
 	f.n.Add(1)
 }
 

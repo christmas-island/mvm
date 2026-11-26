@@ -109,7 +109,8 @@ A receiver whose type graph holds two layouts under one name is never parked.
 interpreter is used again; it lets the slots serve *any* method (`sweep.go`).
 It repoints the closed types' method tables (`Ifn`/`Tfn`) to the shape's
 generated trap (`trapSN`, same ABI as the stubs, panics with `ErrStaleCall`)
-and retires the slots.
+and retires the slots; a retired slot still serves a reload of the same code
+(same class key) at once, like a parked one.
 When a pool's fresh slots run out, `Sweep` lists the runtime's itabs (the only
 other copies of a method PC native code dispatches through) from a
 `runtime/debug.WriteHeapDump` -- its itab records precede the heap objects, so
