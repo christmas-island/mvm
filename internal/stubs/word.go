@@ -30,6 +30,7 @@ type wordPool struct {
 	stubs []uintptr
 	slots []CoreFunc
 	name  string
+	trap  uintptr // stale-call trap with this shape's ABI (see sweep.go)
 	free  freeSlots
 }
 
@@ -40,7 +41,10 @@ var wordPools sync.Map
 
 // registerWordPool records a generated word-shape pool. Called from pool_w*.go
 // init().
-func registerWordPool(key string, p *wordPool) { wordPools.Store(key, p) }
+func registerWordPool(key string, p *wordPool) {
+	p.free.setPool(p.name, p.next, p.cap, p.stubs, p.trap)
+	wordPools.Store(key, p)
+}
 
 // HasWordShape reports whether a word-shape pool exists for key, so the vm can
 // drop (not error on) a method whose word-shape has no generated pool.

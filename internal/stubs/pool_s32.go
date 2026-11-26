@@ -1293,6 +1293,11 @@ func stubS32_255(recv unsafe.Pointer, ctx context.Context, level slog.Level) boo
 	return dispatchS32(255, recv, ctx, level)
 }
 
+//go:noinline
+func trapS32(recv unsafe.Pointer, ctx context.Context, level slog.Level) bool {
+	panic(staleCall("S32"))
+}
+
 var stubsS32 [poolSizeS32]uintptr
 
 func init() {
@@ -1552,4 +1557,5 @@ func init() {
 	stubsS32[253] = runtype.FuncPC(stubS32_253)
 	stubsS32[254] = runtype.FuncPC(stubS32_254)
 	stubsS32[255] = runtype.FuncPC(stubS32_255)
+	freeSlotsS32.setPool("S32", &nextSlotS32, poolSizeS32, stubsS32[:], runtype.FuncPC(trapS32))
 }

@@ -780,6 +780,9 @@ func stubS14_254(recv unsafe.Pointer, st fmt.State, verb rune) { dispatchS14(254
 //go:noinline
 func stubS14_255(recv unsafe.Pointer, st fmt.State, verb rune) { dispatchS14(255, recv, st, verb) }
 
+//go:noinline
+func trapS14(recv unsafe.Pointer, st fmt.State, verb rune) { panic(staleCall("S14")) }
+
 var stubsS14 [poolSizeS14]uintptr
 
 func init() {
@@ -1039,4 +1042,5 @@ func init() {
 	stubsS14[253] = runtype.FuncPC(stubS14_253)
 	stubsS14[254] = runtype.FuncPC(stubS14_254)
 	stubsS14[255] = runtype.FuncPC(stubS14_255)
+	freeSlotsS14.setPool("S14", &nextSlotS14, poolSizeS14, stubsS14[:], runtype.FuncPC(trapS14))
 }

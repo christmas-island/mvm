@@ -1277,6 +1277,9 @@ func stubW_iip_255(recv unsafe.Pointer) (uint64, uint64, unsafe.Pointer) {
 	return dispatchW_iip(255, recv)
 }
 
+//go:noinline
+func trapW_iip(recv unsafe.Pointer) (uint64, uint64, unsafe.Pointer) { panic(staleCall("W_iip")) }
+
 var stubsW_iip [poolSizeW_iip]uintptr
 
 func dispatchW_iip(slot uint32, recv unsafe.Pointer) (uint64, uint64, unsafe.Pointer) {
@@ -1555,5 +1558,6 @@ func init() {
 		stubs: stubsW_iip[:],
 		slots: slotPoolW_iip[:],
 		name:  "W_iip",
+		trap:  runtype.FuncPC(trapW_iip),
 	})
 }

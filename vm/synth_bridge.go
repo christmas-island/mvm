@@ -236,27 +236,46 @@ func (m *Machine) attachValueRecv(t *mtype.Type) error {
 
 // fillSynthMethods installs methods, recording the release closure for ReleaseSynthMethods.
 func (m *Machine) fillSynthMethods(res *runtype.Reservation, methods []stubs.Method) error {
-	release, err := stubs.FillMethods(res, methods)
-	if release != nil {
+	park, retire, err := stubs.FillMethodsRetirable(res, methods)
+	if park != nil {
 		m.synthReleasesMu.Lock()
-		m.synthReleases = append(m.synthReleases, release)
+		m.synthReleases = append(m.synthReleases, synthRelease{park, retire})
 		m.synthReleasesMu.Unlock()
 	}
 	return err
 }
+
+// synthRelease gives one fill's slots back (see stubs.FillMethodsRetirable).
+type synthRelease struct{ park, retire func() }
 
 // ReleaseSynthMethods nils the stub-pool handler slots this Machine acquired so a
 // disposed interpreter becomes collectable, and returns the slots for reuse by the
 // same methods of layout-identical types (an interpreter reloading the same code).
 // Do not dispatch its synth methods after. Backs Interp.Close; no-op on wasm.
 func (m *Machine) ReleaseSynthMethods() {
+	for _, r := range m.takeSynthReleases() {
+		r.park()
+	}
+}
+
+// RetireSynthMethods is ReleaseSynthMethods for a host that guarantees no
+// value of this Machine's types is used again: the types' method tables are
+// repointed to stale-call traps and the slots become available to any method
+// after the next stub sweep, which also repoints the itabs that still hold
+// them. A stale call that the sweep reaches panics with stubs.ErrStaleCall.
+// Backs Interp.CloseAndRelease; no-op on wasm.
+func (m *Machine) RetireSynthMethods() {
+	for _, r := range m.takeSynthReleases() {
+		r.retire()
+	}
+}
+
+func (m *Machine) takeSynthReleases() []synthRelease {
 	m.synthReleasesMu.Lock()
+	defer m.synthReleasesMu.Unlock()
 	releases := m.synthReleases
 	m.synthReleases = nil
-	m.synthReleasesMu.Unlock()
-	for _, r := range releases {
-		r()
-	}
+	return releases
 }
 
 func (m *Machine) attachPtrRecv(t *mtype.Type) error {

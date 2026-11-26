@@ -780,6 +780,9 @@ func stubS36_254(recv unsafe.Pointer) slog.Value { return dispatchS36(254, recv)
 //go:noinline
 func stubS36_255(recv unsafe.Pointer) slog.Value { return dispatchS36(255, recv) }
 
+//go:noinline
+func trapS36(recv unsafe.Pointer) slog.Value { panic(staleCall("S36")) }
+
 var stubsS36 [poolSizeS36]uintptr
 
 func init() {
@@ -1039,4 +1042,5 @@ func init() {
 	stubsS36[253] = runtype.FuncPC(stubS36_253)
 	stubsS36[254] = runtype.FuncPC(stubS36_254)
 	stubsS36[255] = runtype.FuncPC(stubS36_255)
+	freeSlotsS36.setPool("S36", &nextSlotS36, poolSizeS36, stubsS36[:], runtype.FuncPC(trapS36))
 }

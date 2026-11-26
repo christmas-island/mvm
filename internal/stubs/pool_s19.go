@@ -1292,6 +1292,9 @@ func stubS19_255(recv unsafe.Pointer, st fmt.ScanState, verb rune) error {
 	return dispatchS19(255, recv, st, verb)
 }
 
+//go:noinline
+func trapS19(recv unsafe.Pointer, st fmt.ScanState, verb rune) error { panic(staleCall("S19")) }
+
 var stubsS19 [poolSizeS19]uintptr
 
 func init() {
@@ -1551,4 +1554,5 @@ func init() {
 	stubsS19[253] = runtype.FuncPC(stubS19_253)
 	stubsS19[254] = runtype.FuncPC(stubS19_254)
 	stubsS19[255] = runtype.FuncPC(stubS19_255)
+	freeSlotsS19.setPool("S19", &nextSlotS19, poolSizeS19, stubsS19[:], runtype.FuncPC(trapS19))
 }

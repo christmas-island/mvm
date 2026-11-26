@@ -780,6 +780,9 @@ func stubS28_254(recv unsafe.Pointer, dir string) (fs.FS, error) { return dispat
 //go:noinline
 func stubS28_255(recv unsafe.Pointer, dir string) (fs.FS, error) { return dispatchS28(255, recv, dir) }
 
+//go:noinline
+func trapS28(recv unsafe.Pointer, dir string) (fs.FS, error) { panic(staleCall("S28")) }
+
 var stubsS28 [poolSizeS28]uintptr
 
 func init() {
@@ -1039,4 +1042,5 @@ func init() {
 	stubsS28[253] = runtype.FuncPC(stubS28_253)
 	stubsS28[254] = runtype.FuncPC(stubS28_254)
 	stubsS28[255] = runtype.FuncPC(stubS28_255)
+	freeSlotsS28.setPool("S28", &nextSlotS28, poolSizeS28, stubsS28[:], runtype.FuncPC(trapS28))
 }
