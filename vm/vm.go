@@ -503,7 +503,7 @@ const (
 
 // NewMachine returns a pointer on a new Machine.
 func NewMachine() *Machine {
-	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner(), ctl: newControl()}}
+	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner(), ctl: newControl(), cb: &callbackPanics{}}}
 }
 
 // lifetime is a token whose collection means no machine of an interpreter
@@ -512,7 +512,8 @@ func NewMachine() *Machine {
 // active while any of its machines runs.
 type lifetime struct {
 	owner *derive.Owner
-	ctl   *control // interrupt state (interrupt.go)
+	ctl   *control        // interrupt state (interrupt.go)
+	cb    *callbackPanics // panics in callbacks nothing would recover (callback_panic.go)
 }
 
 // Owner returns the derive.Owner that records m's interpreter's entries in
@@ -5198,11 +5199,8 @@ func (m *Machine) buildCallFunc(fval Value, fnType reflect.Type) reflect.Value {
 			return out
 		}
 		if err != nil {
-			var pe *PanicError
-			if errors.As(err, &pe) {
-				panic(reraisedPanic{pe}) // raw value for native recover; see reraisedPanic
-			}
-			panic(err)
+			rs.raiseCallback(err)
+			return zeroResults(fnType)
 		}
 		return out
 	})
@@ -5247,7 +5245,8 @@ func (m *Machine) buildMethodExprFunc(codeAddr int, exprType reflect.Type) refle
 			return out
 		}
 		if err != nil {
-			panic(err)
+			rs.raiseCallback(err)
+			return zeroResults(exprType)
 		}
 		return out
 	})
@@ -5423,21 +5422,27 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 			call = rv.CallSlice
 		}
 		ctl := m.control()
-		if ctl == nil {
-			go func() { call(in) }()
-			return false
+		if ctl != nil {
+			ctl.enter()
 		}
-		ctl.enter()
+		if m.fault == nil {
+			m.fault = newGoroutineFault(m.err, m.faultContinue)
+		}
+		fault := m.fault
 		go func() {
-			defer ctl.exit()
+			if ctl != nil {
+				defer ctl.exit()
+			}
+			// A panic here (most often raised by a callback the native
+			// function ran) is this goroutine's fault, as on an interpreted
+			// goroutine; Go would end the process. An interrupt raised by a
+			// callback just ends the goroutine.
 			g := gid()
 			mvmBases.Store(g, struct{}{})
 			defer mvmBases.Delete(g)
 			defer func() {
-				// An interrupt raised by a callback ends the goroutine; any
-				// other panic keeps going, as in Go.
 				if r := recover(); r != nil && !isInterrupt(r) {
-					panic(r)
+					fault.record(nativeGoPanic(r))
 				}
 			}()
 			call(in)

@@ -387,6 +387,33 @@ an atomic flag and a channel closed on interrupt.
   stops at its next poll once that call returns. A releasing close
   (`Interp.CloseAndRelease`) is only safe at zero.
 
+### Panics in native-initiated callbacks (`callback_panic.go`)
+
+Native code calls interpreted code through a func value (`buildCallFunc`),
+a method expression (`buildMethodExprFunc`) or a synthesized method
+(`callMethod`, behind every stub handler). A panic there returns from the
+runner's `Run` as an error and is raised again as a Go panic
+(`raiseCallback`), so the native caller and its callers see Go semantics:
+an interpreted `recover` further down, net/http's handler recovery or the
+host's own `recover` catch it. `callMethod` raises an interpreted panic (or
+`os.Exit`) itself, so a shape handler cannot turn it into zero results.
+
+On a goroutine where nothing could recover it, raising would end the
+process: a timer's (`time.AfterFunc`, `context.AfterFunc`), the finalizer
+and cleanup goroutines, a goroutine a native library starts
+(`sync.WaitGroup.Go`). `raiseCallback` decides from the stack at that
+moment: if there is no mvm frame (an active `Run`, or the base of a native
+goroutine an interpreted `go` statement started), no host frame (outside
+the standard library and mvm) and no frame from `recoveringFrames`
+(net/http's server, `iter.Pull`), it records a `*CallbackPanicError` (the
+`*PanicError` with value, position and interpreted stack, plus the
+goroutine's creator) instead: `CallbackPanics` returns it, the
+`SetCallbackPanicHandler` handler receives it, and it becomes the
+interpreter's goroutine fault, so a run in progress ends with exit status
+2. The callback returns zero results. A native goroutine started by an
+interpreted `go` statement recovers a panic at its base and records it as
+its goroutine fault, as an interpreted goroutine does.
+
 ### Panics, defer, recover, and diagnostics
 
 - `DeferPush` saves a sentinel frame pointing to a deferred function.
