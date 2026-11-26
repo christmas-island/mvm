@@ -107,6 +107,27 @@ A receiver whose type graph holds two layouts under one name is never parked.
 S1 carries 3072 slots (Stringer/Error are the most-attached shape) and S38 5120
 (protobuf markers); the rest default to 256.
 
+### Pool sizes and the `mvm_largepools` profile
+
+Pool sizes are compile-time constants: `gen_pools.go` holds the default
+(`poolSize = 256`) and per-shape `Size` overrides and writes them to `sizes.go`;
+each slot is one generated stub function, so a pool cannot grow at run time.
+Building with `-tags mvm_largepools` selects a profile for hosts that load many
+different programs (or many at once) in one process: every typed pool holds at
+least 1024 slots and every word pool at least 256 and twice its default
+(`largeFloor`, `largeWordFloor`): 4x the distinct small programs of the default
+build, and two concurrent goldmark+GFM loads instead of one. The extra slots live in `pool_*_large.go`, which only that
+tag compiles, so the default build is unchanged (byte-identical).
+
+Measured cost per slot (darwin/arm64, Go 1.27.3, scaling every default-size
+shape): ~434 bytes of binary (~111 text, ~175 pclntab), ~46 bytes of start-up
+RSS, and compile time that grows faster than linearly (the stubs package
+compiles in 6 s with 60k stubs, 39 s with 425k, 306 s with 1.6M). There is no
+hard ceiling up to 1.6M stubs (725 MB binary; arm64's linker inserts branch
+trampolines past the 128 MB call range); size and build time are the limit.
+The profile adds 69,184 stubs: +13 MB generated source, +30 MB binary (mvm
+59 -> 89 MB), +8 MB RSS.
+
 ### wasm carries no pools (shared-PC dispatch)
 
 The ~53k stub functions were about half the wasm binary; the wasm target carries
