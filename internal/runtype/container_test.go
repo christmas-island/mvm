@@ -139,3 +139,47 @@ func TestReserveCapHeadPointersSurviveGC(t *testing.T) {
 		_ = reflect.New(e)
 	}
 }
+
+// Reserving a type of the same name again (a reload of the same code) reuses
+// its name records: the same reflect offsets, so no new offset-table entries
+// or name bytes.
+func TestReloadReusesNames(t *testing.T) {
+	reserve := func() (v, p *Reservation) {
+		v, err := ReserveMethodsCap(reflect.TypeFor[int](), "example.com/names.Same", "example.com/names", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err = ReservePtrMethodsCap(v.Type(), "*example.com/names.Same", "example.com/names", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := sampleMethod("String")
+		m.PkgPath = "example.com/names"
+		for _, r := range []*Reservation{v, p} {
+			if err := r.Fill([]MethodSpec{m}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return v, p
+	}
+	v1, p1 := reserve()
+	v2, p2 := reserve()
+	if v1.Type() == v2.Type() || p1.Type() == p2.Type() {
+		t.Fatal("two reservations share an rtype")
+	}
+	for _, pair := range [][2]*Reservation{{v1, v2}, {p1, p2}} {
+		a, b := pair[0], pair[1]
+		if rtypePtr(a.Type()).Str != rtypePtr(b.Type()).Str {
+			t.Errorf("%v: type name offsets differ", a.Type())
+		}
+		if a.u.PkgPath != b.u.PkgPath {
+			t.Errorf("%v: package path offsets differ", a.Type())
+		}
+		if a.m[0].Name != b.m[0].Name {
+			t.Errorf("%v: method name offsets differ", a.Type())
+		}
+	}
+	if got := v2.Type().String(); got != "example.com/names.Same" {
+		t.Errorf("String = %q", got)
+	}
+}
