@@ -534,18 +534,30 @@ func maybeReserve(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 	return propagateGeom(layoutRT, reserveValueAndPtr(t, layoutRT))
 }
 
+// fits reports whether t may adopt r, a reservation another type with the
+// same name and layout published: r's method tables must hold t's method
+// sets (see MethodCapacity). Nil fits nothing.
+func (r *SynthReservation) fits(t *mtype.Type) bool {
+	if r == nil {
+		return false
+	}
+	n := MethodCapacity(t)
+	return r.value.Cap() >= n && (r.ptr == nil || r.ptr.Cap() >= n)
+}
+
 // newReservation reserves t's value and pointer method sets over layoutRT and
 // records the derived pointer rtype. Nil if the value reservation fails.
 // The caller publishes it in reservations.
 func newReservation(t *mtype.Type, layoutRT reflect.Type) *SynthReservation {
 	name := QualifiedTypeName(t)
 	pkgPath := RtypePkgPath(t)
-	vr, err := runtype.ReserveMethods(layoutRT, name, pkgPath)
+	n := MethodCapacity(t)
+	vr, err := runtype.ReserveMethodsCap(layoutRT, name, pkgPath, n)
 	if err != nil {
 		return nil
 	}
 	res := &SynthReservation{value: vr}
-	if pr, err := runtype.ReservePtrMethods(vr.Type(), "*"+name, pkgPath); err == nil {
+	if pr, err := runtype.ReservePtrMethodsCap(vr.Type(), "*"+name, pkgPath, n); err == nil {
 		res.ptr = pr
 		AttachPtrDerived(t, pr.Type())
 	}
@@ -554,7 +566,7 @@ func newReservation(t *mtype.Type, layoutRT reflect.Type) *SynthReservation {
 
 // newCarrier reserves a methodless named identity for t over donor.
 func newCarrier(t *mtype.Type, donor reflect.Type) *SynthReservation {
-	vr, err := runtype.ReserveMethods(donor, QualifiedTypeName(t), RtypePkgPath(t))
+	vr, err := runtype.ReserveMethodsCap(donor, QualifiedTypeName(t), RtypePkgPath(t), MethodCapacity(t))
 	if err != nil {
 		return nil
 	}
@@ -579,11 +591,14 @@ func reserveNamedCarrier(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 	derivedMu.Lock()
 	defer derivedMu.Unlock()
 	res := sharedCarriers[key]
-	if res == nil {
+	if !res.fits(t) {
+		shared := res != nil
 		if res = newCarrier(t, layoutRT); res == nil {
 			return layoutRT
 		}
-		sharedCarriers[key] = res
+		if !shared {
+			sharedCarriers[key] = res
+		}
 	}
 	own(t)
 	reservations[t] = res
@@ -599,7 +614,7 @@ func reserveValueAndPtr(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 		if cachep = ActiveRtypeCache(); cachep != nil {
 			cacheKey = MethodStructKey{name: QualifiedTypeName(t), pkgPath: RtypePkgPath(t), layoutSig: layoutRT.String(), methodSig: methodFingerprint(t)}
 			derivedMu.Lock()
-			if shared := (*cachep)[cacheKey]; shared != nil {
+			if shared := (*cachep)[cacheKey]; shared.fits(t) {
 				own(t)
 				reservations[t] = shared
 				derivedMu.Unlock()
@@ -739,7 +754,7 @@ func shareOrFill(t *mtype.Type, reserved, realLayout reflect.Type,
 	lookup func() *SynthReservation, publish func(),
 ) reflect.Type {
 	derivedMu.Lock()
-	if shared := lookup(); shared != nil {
+	if shared := lookup(); shared.fits(t) {
 		own(t)
 		reservations[t] = shared
 		derivedMu.Unlock()
