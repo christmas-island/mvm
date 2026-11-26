@@ -38,6 +38,7 @@ var reservations = map[*mtype.Type]*SynthReservation{} // guarded by derivedMu
 // single rtype per name.
 type sharedStructKey struct {
 	name      string
+	pkgPath   string
 	layoutSig string
 }
 
@@ -59,6 +60,7 @@ var sharedPlainStructs = map[plainStructKey]reflect.Type{} // guarded by derived
 // Per-execution, not global: the stub captures the Machine, so a global would pin it.
 type MethodStructKey struct {
 	name      string
+	pkgPath   string
 	layoutSig string
 	methodSig string
 }
@@ -572,7 +574,7 @@ func adoptShared(t *mtype.Type, shared *SynthReservation) reflect.Type {
 }
 
 func reserveNamedCarrier(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
-	key := sharedStructKey{name: QualifiedTypeName(t), layoutSig: layoutRT.String()}
+	key := sharedStructKey{name: QualifiedTypeName(t), pkgPath: RtypePkgPath(t), layoutSig: layoutRT.String()}
 	derivedMu.Lock()
 	defer derivedMu.Unlock()
 	res := sharedCarriers[key]
@@ -593,7 +595,7 @@ func reserveValueAndPtr(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 	var cachep *map[MethodStructKey]*SynthReservation
 	if ShareMethodCarriers {
 		if cachep = ActiveRtypeCache(); cachep != nil {
-			cacheKey = MethodStructKey{name: QualifiedTypeName(t), layoutSig: layoutRT.String(), methodSig: methodFingerprint(t)}
+			cacheKey = MethodStructKey{name: QualifiedTypeName(t), pkgPath: RtypePkgPath(t), layoutSig: layoutRT.String(), methodSig: methodFingerprint(t)}
 			derivedMu.Lock()
 			if shared := (*cachep)[cacheKey]; shared != nil {
 				reservations[t] = shared
@@ -696,7 +698,7 @@ func maybeReserveStruct(t *mtype.Type) (rt reflect.Type, handled bool) {
 	pendingFinalize.clear(t)
 	// Methodless-table identity is safe to share across Evals (see sharedStructs).
 	if !hasSynthTableMethods(t) {
-		key := sharedStructKey{name: QualifiedTypeName(t), layoutSig: realLayout.String()}
+		key := sharedStructKey{name: QualifiedTypeName(t), pkgPath: RtypePkgPath(t), layoutSig: realLayout.String()}
 		return shareOrFill(t, reserved, realLayout,
 			func() *SynthReservation { return sharedStructs[key] },
 			func() { sharedStructs[key] = res }), true
@@ -705,6 +707,7 @@ func maybeReserveStruct(t *mtype.Type) (rt reflect.Type, handled bool) {
 	if cachep := ActiveRtypeCache(); cachep != nil {
 		key := MethodStructKey{
 			name:      QualifiedTypeName(t),
+			pkgPath:   RtypePkgPath(t),
 			layoutSig: realLayout.String(),
 			methodSig: methodFingerprint(t),
 		}
@@ -757,10 +760,6 @@ var (
 	derivedMu       sync.Mutex
 	derivedCache    = map[*mtype.Type]*derivedTypes{}
 	synthIfaceCache = map[*mtype.Type]reflect.Type{}
-	// synthIfaceNamed dedupes named synth ifaces across clone *Types: clones
-	// must share one InterfaceOf rtype or rtype-identity compares split
-	// (goldmark ast.Node.SortChildren).
-	synthIfaceNamed = map[string]reflect.Type{}
 )
 
 var materializeMu sync.Mutex // serializes the whole materialization pass
@@ -1651,7 +1650,7 @@ func synthIfaceNameKey(t *mtype.Type) string {
 		names = append(names, im.Name+":"+sig)
 	}
 	sort.Strings(names)
-	return t.PkgName + "." + t.Name + "{" + strings.Join(names, ",") + "}"
+	return RtypePkgPath(t) + "." + t.Name + "{" + strings.Join(names, ",") + "}"
 }
 
 func imethodSigString(im mtype.IfaceMethod) string {

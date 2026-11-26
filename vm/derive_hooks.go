@@ -16,6 +16,10 @@ import (
 // struct rtypes (see ActiveRtypeCache). Accessed under derive's derivedMu.
 var globalMethodStructs map[derive.MethodStructKey]*derive.SynthReservation
 
+// globalSynthIfaces is the wasm-only cross-machine named synth-interface dedup
+// (see ActiveIfaceCache), consistent with globalMethodStructs.
+var globalSynthIfaces = map[string]reflect.Type{}
+
 // ifaceShapes collects the word keys iface-method sigs demand (MVM_IFACESHAPES).
 // Generated pools must cover this set for interface satisfaction; attach-only
 // shapes outside it never affect reflect.Implements.
@@ -64,6 +68,15 @@ func init() {
 			}
 			ifaceShapesMu.Unlock()
 		}
+	}
+	derive.ActiveIfaceCache = func() map[string]reflect.Type {
+		if synthSharedPC {
+			return globalSynthIfaces
+		}
+		if m := ActiveMachine(); m != nil {
+			return m.synthIfaces
+		}
+		return nil
 	}
 	derive.ActiveRtypeCache = func() *map[derive.MethodStructKey]*derive.SynthReservation {
 		if synthSharedPC {

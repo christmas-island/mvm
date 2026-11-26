@@ -16,6 +16,11 @@ var ActiveRtypeCache = func() *map[MethodStructKey]*SynthReservation { return ni
 // where the cache is global and a synth fill captures no *Machine.
 var ShareMethodCarriers = false
 
+// ActiveIfaceCache returns the running Machine's named synth-interface dedup
+// map (see SynthIfaceRtype), or nil to dedup only per *mtype.Type.
+// Accessed under derivedMu.
+var ActiveIfaceCache = func() map[string]reflect.Type { return nil }
+
 // IfaceShapeLog records each erased iface-method signature consulted for
 // synth-shape availability; the vm sets it under MVM_IFACESHAPES.
 // The logged keys are the word pools interface satisfaction actually needs;

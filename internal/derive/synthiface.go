@@ -13,7 +13,11 @@ import (
 // SynthIfaceRtype returns t's method-bearing synthetic interface rtype, building
 // and caching it on first use (nil if a method signature cannot be built; the
 // any bridge stays and a later call retries). Clones of one named interface
-// dedupe by synthIfaceNameKey to a single rtype identity.
+// dedupe by synthIfaceNameKey to a single rtype identity, so rtype-identity
+// compares do not split (goldmark ast.Node.SortChildren).
+// The dedup map comes from ActiveIfaceCache: it is per Machine on native,
+// because a signature can mention a per-Machine method-bearing rtype, so
+// another interpreter's interface rtype would not be implemented by this one's types.
 //
 // When some method signature is still unmaterialized, t's rtype is reserved and
 // cached before the signatures are built, so a self- or mutually-recursive
@@ -32,9 +36,13 @@ func SynthIfaceRtype(t *mtype.Type) reflect.Type {
 		derivedMu.Unlock()
 		return st
 	}
-	key := synthIfaceNameKey(t)
+	named := ActiveIfaceCache()
+	key := ""
+	if named != nil {
+		key = synthIfaceNameKey(t)
+	}
 	if key != "" {
-		if st := synthIfaceNamed[key]; st != nil {
+		if st := named[key]; st != nil {
 			synthIfaceCache[t] = st
 			derivedMu.Unlock()
 			return st
@@ -48,19 +56,19 @@ func SynthIfaceRtype(t *mtype.Type) reflect.Type {
 	if ims, ok := collectImethods(t, false); ok {
 		// All signatures materialized: no cycle to break, build atomically.
 		rt := runtype.InterfaceOf(name, RtypePkgPath(t), ims)
-		cacheSynthIface(t, key, rt)
+		cacheSynthIface(named, t, key, rt)
 		derivedMu.Unlock()
 		return rt
 	}
 	h := runtype.ReserveInterface(name, RtypePkgPath(t))
 	rt := h.Type()
-	cacheSynthIface(t, key, rt)
+	cacheSynthIface(named, t, key, rt)
 	derivedMu.Unlock()
 
 	ims, ok := collectImethods(t, true)
 	if !ok {
 		derivedMu.Lock()
-		uncacheSynthIface(t, key)
+		uncacheSynthIface(named, t, key)
 		derivedMu.Unlock()
 		return nil
 	}
@@ -70,19 +78,19 @@ func SynthIfaceRtype(t *mtype.Type) reflect.Type {
 
 // cacheSynthIface records rt as t's synth interface rtype and under its
 // cross-clone dedupe key. Caller holds derivedMu.
-func cacheSynthIface(t *mtype.Type, key string, rt reflect.Type) {
+func cacheSynthIface(named map[string]reflect.Type, t *mtype.Type, key string, rt reflect.Type) {
 	synthIfaceCache[t] = rt
 	if key != "" {
-		synthIfaceNamed[key] = rt
+		named[key] = rt
 	}
 }
 
 // uncacheSynthIface rolls back a reservation whose method sigs could not be
 // built. Caller holds derivedMu.
-func uncacheSynthIface(t *mtype.Type, key string) {
+func uncacheSynthIface(named map[string]reflect.Type, t *mtype.Type, key string) {
 	delete(synthIfaceCache, t)
 	if key != "" {
-		delete(synthIfaceNamed, key)
+		delete(named, key)
 	}
 }
 
