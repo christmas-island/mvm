@@ -1292,6 +1292,11 @@ func stubS15_255(recv unsafe.Pointer, e *xml.Encoder, start xml.StartElement) er
 	return dispatchS15(255, recv, e, start)
 }
 
+//go:noinline
+func trapS15(recv unsafe.Pointer, e *xml.Encoder, start xml.StartElement) error {
+	panic(staleCall("S15"))
+}
+
 var stubsS15 [poolSizeS15]uintptr
 
 func init() {
@@ -1551,4 +1556,5 @@ func init() {
 	stubsS15[253] = runtype.FuncPC(stubS15_253)
 	stubsS15[254] = runtype.FuncPC(stubS15_254)
 	stubsS15[255] = runtype.FuncPC(stubS15_255)
+	freeSlotsS15.setPool("S15", &nextSlotS15, poolSizeS15, stubsS15[:], runtype.FuncPC(trapS15))
 }

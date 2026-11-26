@@ -1,6 +1,7 @@
 package stubs
 
 import (
+	"errors"
 	"reflect"
 	"slices"
 	"sort"
@@ -16,6 +17,10 @@ import (
 // and signature with the same name and deep memory layout. This is what
 // reloading the same package in a new interpreter attaches; anything else
 // takes a fresh slot.
+//
+// Interp.CloseAndRelease retires its slots instead: their method tables are
+// repointed to the shape's trap at once, and a sweep (sweep.go) repoints every
+// itab still holding their PCs before any other method may take them.
 
 // slotClass describes the method a slot serves; key is computed lazily.
 type slotClass struct {
@@ -26,6 +31,9 @@ type slotClass struct {
 
 	once sync.Once
 	key  string
+
+	pool   *freeSlots // the pool the slot came from, set by take
+	retire bool       // release retires the slot instead of parking it
 }
 
 func newSlotClass(recv reflect.Type, m Method) *slotClass {
@@ -155,14 +163,54 @@ func (w *layoutWriter) write(b *strings.Builder, t reflect.Type) {
 	b.WriteByte(')')
 }
 
-// freeSlots holds a pool's released slot indices by slotClass key.
+// freeSlots holds a pool's released slot indices: parked by slotClass key, or
+// retired (released by Interp.CloseAndRelease: the closed interpreter's method
+// tables already point at the trap, its itabs may not yet) and swept (no
+// method table or itab reaches the slot any more, so any method may take it).
 type freeSlots struct {
-	n  atomic.Int32 // parked slot count, for a lock-free empty check
-	mu sync.Mutex
-	m  map[string][]uint32
+	n     atomic.Int32 // parked slot count, for a lock-free empty check
+	nfree atomic.Int32 // swept slot count, likewise
+	mu    sync.Mutex
+	m     map[string][]uint32
+
+	retired []uint32 // guarded by mu
+	swept   []uint32 // guarded by mu
+
+	// Set once at init by the generated pool file (setPool).
+	name  string
+	next  *atomic.Uint32
+	cap   uint32
+	stubs []uintptr
+	trap  uintptr
+}
+
+// setPool records the pool behind f, so sweep can map its slots to stub PCs
+// and take can tell when the pool's fresh slots have run out.
+func (f *freeSlots) setPool(name string, next *atomic.Uint32, size uint32, stubs []uintptr, trap uintptr) {
+	f.name, f.next, f.cap, f.stubs, f.trap = name, next, size, stubs, trap
+	registerPool(f)
 }
 
 func (f *freeSlots) take(c *slotClass) (uint32, bool) {
+	if c != nil {
+		c.pool = f
+	}
+	if n, ok := f.takeParked(c); ok {
+		return n, true
+	}
+	if n, ok := f.takeSwept(); ok {
+		return n, true
+	}
+	// Fresh slots first; once they are gone, sweep what retired interpreters
+	// left so it can serve this method.
+	if f.next == nil || f.next.Load() < f.cap || !f.hasRetired() {
+		return 0, false
+	}
+	sweepRetired()
+	return f.takeSwept()
+}
+
+func (f *freeSlots) takeParked(c *slotClass) (uint32, bool) {
 	if f.n.Load() == 0 {
 		return 0, false
 	}
@@ -186,8 +234,36 @@ func (f *freeSlots) take(c *slotClass) (uint32, bool) {
 	return n, true
 }
 
-// put parks slot n for reuse by c's class; a slot with no class is retired.
+func (f *freeSlots) takeSwept() (uint32, bool) {
+	if f.nfree.Load() == 0 {
+		return 0, false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.swept) == 0 {
+		return 0, false
+	}
+	n := f.swept[len(f.swept)-1]
+	f.swept = f.swept[:len(f.swept)-1]
+	f.nfree.Add(-1)
+	return n, true
+}
+
+func (f *freeSlots) hasRetired() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.retired) > 0
+}
+
+// put parks slot n for reuse by c's class; a slot with no class is retired
+// for good. A class marked retire (CloseAndRelease) retires n for the sweep.
 func (f *freeSlots) put(c *slotClass, n uint32) {
+	if c != nil && c.retire {
+		f.mu.Lock()
+		f.retired = append(f.retired, n)
+		f.mu.Unlock()
+		return
+	}
 	key := c.getKey()
 	if key == "" {
 		return
@@ -199,4 +275,36 @@ func (f *freeSlots) put(c *slotClass, n uint32) {
 	f.m[key] = append(f.m[key], n)
 	f.mu.Unlock()
 	f.n.Add(1)
+}
+
+// staleCallError is the panic value of a shape's trap (see sweep.go).
+type staleCallError struct{ shape string }
+
+func (e *staleCallError) Error() string {
+	return "stubs: method (shape " + e.shape + ") called on a value of an interpreter closed with CloseAndRelease"
+}
+
+func (e *staleCallError) Is(target error) bool { return target == ErrStaleCall }
+
+// ErrStaleCall is matched (errors.Is) by the panic value of a method call on a
+// value whose interpreter was closed with CloseAndRelease.
+var ErrStaleCall = errors.New("stubs: method called on a value of a released interpreter")
+
+func staleCall(shape string) error { return &staleCallError{shape} }
+
+var (
+	poolsMu sync.Mutex
+	pools   []*freeSlots
+)
+
+func registerPool(f *freeSlots) {
+	poolsMu.Lock()
+	pools = append(pools, f)
+	poolsMu.Unlock()
+}
+
+func registeredPools() []*freeSlots {
+	poolsMu.Lock()
+	defer poolsMu.Unlock()
+	return append([]*freeSlots(nil), pools...)
 }

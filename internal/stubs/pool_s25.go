@@ -780,6 +780,9 @@ func stubS25_254(recv unsafe.Pointer) (fs.FileInfo, error) { return dispatchS25(
 //go:noinline
 func stubS25_255(recv unsafe.Pointer) (fs.FileInfo, error) { return dispatchS25(255, recv) }
 
+//go:noinline
+func trapS25(recv unsafe.Pointer) (fs.FileInfo, error) { panic(staleCall("S25")) }
+
 var stubsS25 [poolSizeS25]uintptr
 
 func init() {
@@ -1039,4 +1042,5 @@ func init() {
 	stubsS25[253] = runtype.FuncPC(stubS25_253)
 	stubsS25[254] = runtype.FuncPC(stubS25_254)
 	stubsS25[255] = runtype.FuncPC(stubS25_255)
+	freeSlotsS25.setPool("S25", &nextSlotS25, poolSizeS25, stubsS25[:], runtype.FuncPC(trapS25))
 }

@@ -780,6 +780,9 @@ func stubS23_254(recv unsafe.Pointer) fs.FileMode { return dispatchS23(254, recv
 //go:noinline
 func stubS23_255(recv unsafe.Pointer) fs.FileMode { return dispatchS23(255, recv) }
 
+//go:noinline
+func trapS23(recv unsafe.Pointer) fs.FileMode { panic(staleCall("S23")) }
+
 var stubsS23 [poolSizeS23]uintptr
 
 func init() {
@@ -1039,4 +1042,5 @@ func init() {
 	stubsS23[253] = runtype.FuncPC(stubS23_253)
 	stubsS23[254] = runtype.FuncPC(stubS23_254)
 	stubsS23[255] = runtype.FuncPC(stubS23_255)
+	freeSlotsS23.setPool("S23", &nextSlotS23, poolSizeS23, stubsS23[:], runtype.FuncPC(trapS23))
 }

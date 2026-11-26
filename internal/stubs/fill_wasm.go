@@ -25,3 +25,9 @@ func FillMethods(res *runtype.Reservation, methods []Method) (release func(), er
 	}
 	return nil, res.Fill(specs)
 }
+
+// FillMethodsRetirable is FillMethods on wasm: there are no slots to give back.
+func FillMethodsRetirable(res *runtype.Reservation, methods []Method) (park, retire func(), err error) {
+	_, err = FillMethods(res, methods)
+	return nil, nil, err
+}

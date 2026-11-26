@@ -439,7 +439,7 @@ type Machine struct {
 	synthIfaces map[string]reflect.Type
 
 	synthReleasesMu sync.Mutex
-	synthReleases   []func() // nil this Machine's stub-pool handler slots.
+	synthReleases   []synthRelease // give back this Machine's stub-pool slots.
 
 	fault         *goroutineFault // shared goroutine-panic sink, lazily created on first `go`
 	faultContinue bool            // policy seed copied into fault when it is created

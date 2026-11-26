@@ -1292,6 +1292,11 @@ func stubS16_255(recv unsafe.Pointer, d *xml.Decoder, start xml.StartElement) er
 	return dispatchS16(255, recv, d, start)
 }
 
+//go:noinline
+func trapS16(recv unsafe.Pointer, d *xml.Decoder, start xml.StartElement) error {
+	panic(staleCall("S16"))
+}
+
 var stubsS16 [poolSizeS16]uintptr
 
 func init() {
@@ -1551,4 +1556,5 @@ func init() {
 	stubsS16[253] = runtype.FuncPC(stubS16_253)
 	stubsS16[254] = runtype.FuncPC(stubS16_254)
 	stubsS16[255] = runtype.FuncPC(stubS16_255)
+	freeSlotsS16.setPool("S16", &nextSlotS16, poolSizeS16, stubsS16[:], runtype.FuncPC(trapS16))
 }

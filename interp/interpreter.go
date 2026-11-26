@@ -15,6 +15,7 @@ import (
 
 	"github.com/mvm-sh/mvm/comp"
 	"github.com/mvm-sh/mvm/goparser"
+	"github.com/mvm-sh/mvm/internal/stubs"
 	"github.com/mvm-sh/mvm/lang"
 	"github.com/mvm-sh/mvm/mtype"
 	"github.com/mvm-sh/mvm/stdlib"
@@ -77,6 +78,36 @@ func (i *Interp) Close() {
 	i.ReleaseSynthMethods()
 	i.SetDebugInfo(nil)
 }
+
+// CloseAndRelease is Close for a host that guarantees no value created by this
+// interpreter is used after it returns: results already copied out (marshalled
+// to bytes, converted to native types) and no interpreted goroutine still
+// running. Close can only lend the interpreter's stub slots to a later load of
+// the same code, so a process loading many different programs runs out of them;
+// CloseAndRelease makes them available to any code.
+//
+// It repoints the methods of the interpreter's types to traps at once, and the
+// stub pools sweep the runtime's itabs (one runtime/debug.WriteHeapDump, so a
+// stop-the-world pause proportional to the heap and a temporary file of that
+// size) before a released slot serves other code; a pool sweeps only when its
+// fresh slots run out. A method call that reaches a closed interpreter's value
+// through its type or an itab then panics with an error matching
+// ErrStaleMethodCall instead of running another program's method.
+//
+// What a sweep cannot reach stays unsafe, so the guarantee above is the
+// contract and the trap only a safety net: a reflect.Method.Func taken from
+// such a type before CloseAndRelease (it holds the raw code pointer), and a
+// call racing with CloseAndRelease or the sweep (a goroutine that loaded the
+// method pointer before the repointing and calls it after the slot was
+// reassigned) still run whatever method holds the slot by then.
+func (i *Interp) CloseAndRelease() {
+	i.RetireSynthMethods()
+	i.SetDebugInfo(nil)
+}
+
+// ErrStaleMethodCall is matched (errors.Is) by the panic value of a method call
+// on a value of an interpreter closed with CloseAndRelease.
+var ErrStaleMethodCall = stubs.ErrStaleCall
 
 // UseHostStdio keeps the interpreted os.Std{in,out,err} bound to the host's real
 // *os.File streams rather than routing them through the machine's SetIO writers.

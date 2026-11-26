@@ -1297,6 +1297,11 @@ func stubWiiiiii__255(recv unsafe.Pointer, w0 uint64, w1 uint64, w2 uint64, w3 u
 	dispatchWiiiiii_(255, recv, w0, w1, w2, w3, w4, w5)
 }
 
+//go:noinline
+func trapWiiiiii_(recv unsafe.Pointer, w0 uint64, w1 uint64, w2 uint64, w3 uint64, w4 uint64, w5 uint64) {
+	panic(staleCall("Wiiiiii_"))
+}
+
 var stubsWiiiiii_ [poolSizeWiiiiii_]uintptr
 
 func dispatchWiiiiii_(slot uint32, recv unsafe.Pointer, w0 uint64, w1 uint64, w2 uint64, w3 uint64, w4 uint64, w5 uint64) {
@@ -1580,5 +1585,6 @@ func init() {
 		stubs: stubsWiiiiii_[:],
 		slots: slotPoolWiiiiii_[:],
 		name:  "Wiiiiii_",
+		trap:  runtype.FuncPC(trapWiiiiii_),
 	})
 }

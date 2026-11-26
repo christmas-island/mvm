@@ -104,6 +104,26 @@ A stale value of a closed interpreter's type that is still dispatched (which
 `Close` forbids) then reaches the new interpreter's method of the identical
 type, rather than a missing handler.
 A receiver whose type graph holds two layouts under one name is never parked.
+
+`Interp.CloseAndRelease` is for hosts that guarantee no value of the closed
+interpreter is used again; it lets the slots serve *any* method (`sweep.go`).
+It repoints the closed types' method tables (`Ifn`/`Tfn`) to the shape's
+generated trap (`trapSN`, same ABI as the stubs, panics with `ErrStaleCall`)
+and retires the slots.
+When a pool's fresh slots run out, `Sweep` lists the runtime's itabs (the only
+other copies of a method PC native code dispatches through) from a
+`runtime/debug.WriteHeapDump` -- its itab records precede the heap objects, so
+only the dump's head is kept, through a non-blocking socket, with a temp file as
+fallback -- repoints every entry holding a retired slot's PC to its trap, and
+moves the retired slots to the pool's swept list, which any method takes before
+a fresh slot.
+A stale call through the type, an itab, reflect or the type-assertion caches
+then panics instead of running another program's method on the wrong memory.
+Not covered (the contract, not the trap, makes these safe): a
+`reflect.Method.Func` taken before the close (it holds the raw PC), and a call
+racing with the close or the sweep. A sweep is a stop-the-world pause that
+grows with the heap (~200 ms at a few hundred MiB).
+
 S1 carries 3072 slots (Stringer/Error are the most-attached shape) and S38 5120
 (protobuf markers); the rest default to 256.
 

@@ -1547,6 +1547,9 @@ func stubS3_510(recv unsafe.Pointer, data []byte) error { return dispatchS3(510,
 //go:noinline
 func stubS3_511(recv unsafe.Pointer, data []byte) error { return dispatchS3(511, recv, data) }
 
+//go:noinline
+func trapS3(recv unsafe.Pointer, data []byte) error { panic(staleCall("S3")) }
+
 var stubsS3 [poolSizeS3]uintptr
 
 func init() {
@@ -2062,4 +2065,5 @@ func init() {
 	stubsS3[509] = runtype.FuncPC(stubS3_509)
 	stubsS3[510] = runtype.FuncPC(stubS3_510)
 	stubsS3[511] = runtype.FuncPC(stubS3_511)
+	freeSlotsS3.setPool("S3", &nextSlotS3, poolSizeS3, stubsS3[:], runtype.FuncPC(trapS3))
 }

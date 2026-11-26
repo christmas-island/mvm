@@ -369,6 +369,15 @@ func writeStub(b *bytes.Buffer, sp stubSpec, i int) {
 		sp.id, i, sp.params, sp.results, sp.ret, sp.id, i, sp.args)
 }
 
+// writeTrap emits the shape's stale-call trap: a function with the stub ABI that
+// a closed interpreter's method tables and itabs are repointed to before its
+// slots serve other code (see sweep.go).
+func writeTrap(b *bytes.Buffer, sp stubSpec) {
+	fmt.Fprintf(b, "//go:noinline\n")
+	fmt.Fprintf(b, "func trap%s(recv unsafe.Pointer%s) %s { panic(staleCall(%q)) }\n\n",
+		sp.id, sp.params, sp.results, sp.id)
+}
+
 // writeFormatted gofmt-formats b and writes it to name.
 func writeFormatted(name string, b *bytes.Buffer) {
 	formatted, err := format.Source(b.Bytes())
@@ -499,6 +508,7 @@ func emitWord(w wordShape) {
 	for i := range sz {
 		writeStub(&b, sp, i)
 	}
+	writeTrap(&b, sp)
 
 	fmt.Fprintf(&b, "var stubs%s [poolSize%s]uintptr\n\n", id, id)
 
@@ -521,7 +531,7 @@ func emitWord(w wordShape) {
 	}
 	fmt.Fprintf(&b, "\tregisterWordPool(%q, &wordPool{\n", w.key())
 	fmt.Fprintf(&b, "\t\tnext:  &nextSlot%s,\n\t\tcap:   poolSize%s,\n", id, id)
-	fmt.Fprintf(&b, "\t\tstubs: stubs%s[:],\n\t\tslots: slotPool%s[:],\n\t\tname:  %q,\n\t})\n}\n", id, id, id)
+	fmt.Fprintf(&b, "\t\tstubs: stubs%s[:],\n\t\tslots: slotPool%s[:],\n\t\tname:  %q,\n\t\ttrap:  runtype.FuncPC(trap%s),\n\t})\n}\n", id, id, id, id)
 
 	writeFormatted(fmt.Sprintf("pool_%s.go", lower(id)), &b)
 	sizeRows = append(sizeRows, sizeRow{id, sz})
@@ -544,11 +554,13 @@ func emit(s shape) {
 	for i := range sz {
 		writeStub(&b, sp, i)
 	}
+	writeTrap(&b, sp)
 	fmt.Fprintf(&b, "var stubs%s [poolSize%s]uintptr\n\n", s.ID, s.ID)
 	fmt.Fprintf(&b, "func init() {\n")
 	for i := range sz {
 		fmt.Fprintf(&b, "\tstubs%s[%d] = runtype.FuncPC(stub%s_%d)\n", s.ID, i, s.ID, i)
 	}
+	fmt.Fprintf(&b, "\tfreeSlots%s.setPool(%q, &nextSlot%s, poolSize%s, stubs%s[:], runtype.FuncPC(trap%s))\n", s.ID, s.ID, s.ID, s.ID, s.ID, s.ID)
 	fmt.Fprintf(&b, "}\n")
 
 	writeFormatted(fmt.Sprintf("pool_%s.go", lower(s.ID)), &b)
