@@ -15,6 +15,7 @@ import (
 
 	"github.com/mvm-sh/mvm/comp"
 	"github.com/mvm-sh/mvm/goparser"
+	"github.com/mvm-sh/mvm/internal/derive"
 	"github.com/mvm-sh/mvm/internal/stubs"
 	"github.com/mvm-sh/mvm/lang"
 	"github.com/mvm-sh/mvm/mtype"
@@ -74,9 +75,28 @@ type Interp struct {
 // Close releases the interpreter's stub-pool handler slots (native only) and
 // breaks the Machine->Interp link so it becomes collectable. Long-lived hosts
 // spawning many interpreters should call it; do not use the interpreter after.
+//
+// The interpreter's entries in mvm's process-global type caches are dropped
+// once no machine of it is left (the interpreter and its runners collected,
+// every interpreted goroutine finished), so a value or goroutine that
+// outlives Close still finds them.
 func (i *Interp) Close() {
 	i.ReleaseSynthMethods()
 	i.SetDebugInfo(nil)
+	i.AfterCollected(forgetTypes, ownedTypes{i.Owner(), i.OwnedTypes()})
+}
+
+// ownedTypes is what an interpreter added to the global type caches: the
+// keys recorded while it compiled and ran, and the types its compiler holds.
+type ownedTypes struct {
+	owner *derive.Owner
+	types map[*mtype.Type]bool
+}
+
+// forgetTypes drops an interpreter's types from the global type caches.
+func forgetTypes(arg any) {
+	o := arg.(ownedTypes)
+	derive.ForgetOwner(o.owner, o.types)
 }
 
 // CloseAndRelease is Close for a host that guarantees no value created by this
@@ -102,9 +122,13 @@ func (i *Interp) Close() {
 // reassigned) still run whatever method holds the slot by then. Under the
 // race detector the runtime cannot produce the heap dump, so no sweep runs and
 // the released slots stay unused, as if the interpreter had never closed.
+//
+// It also drops the interpreter's entries in mvm's process-global type caches
+// at once, which the contract makes safe.
 func (i *Interp) CloseAndRelease() {
 	i.RetireSynthMethods()
 	i.SetDebugInfo(nil)
+	derive.ForgetOwner(i.Owner(), i.OwnedTypes())
 }
 
 // ErrStaleMethodCall is matched (errors.Is) by the panic value of a method call
@@ -123,6 +147,14 @@ func (i *Interp) UseHostStdio() { i.hostStdio = true }
 type Stats struct {
 	CompileTime time.Duration
 	RunTime     time.Duration
+}
+
+// ImportPackageValues populates the interpreter's packages from native
+// values (see goparser.Parser.ImportPackageValues), recording the types this
+// creates in the global type caches for this interpreter (see Close).
+func (i *Interp) ImportPackageValues(m map[string]map[string]reflect.Value) {
+	defer i.EnterCompile()()
+	i.Compiler.ImportPackageValues(m)
 }
 
 // NewInterpreter returns a new interpreter.
@@ -153,6 +185,7 @@ func (i *Interp) EvalFiles(sources []goparser.PackageSource) (reflect.Value, err
 // evalCompiled compiles via the supplied closure, then sets up and runs the VM,
 // returning the last produced value. Shared by Eval and EvalFiles.
 func (i *Interp) evalCompiled(name string, compile func() error) (res reflect.Value, err error) {
+	defer i.EnterCompile()()
 	codeOffset := len(i.Code)
 	dataOffset := 0
 	if codeOffset > 0 {

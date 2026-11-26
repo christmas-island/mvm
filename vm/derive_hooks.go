@@ -78,6 +78,7 @@ func init() {
 		}
 		return nil
 	}
+	derive.ActiveOwner = activeOwner
 	derive.ActiveRtypeCache = func() *map[derive.MethodStructKey]*derive.SynthReservation {
 		if synthSharedPC {
 			// wasm: a synth fill captures no *Machine (fill_wasm.go) and callMethod
