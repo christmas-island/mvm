@@ -13,17 +13,21 @@ type HandlerS25 = func(recv unsafe.Pointer) (fs.FileInfo, error)
 type methodDescS25 struct{ handler HandlerS25 }
 
 var (
-	slotPoolS25 [poolSizeS25]methodDescS25
-	nextSlotS25 atomic.Uint32
+	slotPoolS25  [poolSizeS25]methodDescS25
+	nextSlotS25  atomic.Uint32
+	freeSlotsS25 freeSlots
 )
 
-func acquireSlotS25(h HandlerS25) (pc uintptr, release func(), err error) {
-	n := nextSlotS25.Add(1) - 1
-	if n >= poolSizeS25 {
-		return 0, nil, errPoolFmt("S25", poolSizeS25)
+func acquireSlotS25(h HandlerS25, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS25.take(c)
+	if !ok {
+		n = nextSlotS25.Add(1) - 1
+		if n >= poolSizeS25 {
+			return 0, nil, errPoolFmt("S25", poolSizeS25)
+		}
 	}
 	slotPoolS25[n].handler = h
-	return stubsS25[n], func() { slotPoolS25[n].handler = nil }, nil
+	return stubsS25[n], func() { slotPoolS25[n].handler = nil; freeSlotsS25.put(c, n) }, nil
 }
 
 // SlotsUsedS25 reports how many S25 stub slots have been consumed.

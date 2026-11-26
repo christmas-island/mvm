@@ -12,17 +12,21 @@ type HandlerS29 = func(recv unsafe.Pointer, pattern string) ([]string, error)
 type methodDescS29 struct{ handler HandlerS29 }
 
 var (
-	slotPoolS29 [poolSizeS29]methodDescS29
-	nextSlotS29 atomic.Uint32
+	slotPoolS29  [poolSizeS29]methodDescS29
+	nextSlotS29  atomic.Uint32
+	freeSlotsS29 freeSlots
 )
 
-func acquireSlotS29(h HandlerS29) (pc uintptr, release func(), err error) {
-	n := nextSlotS29.Add(1) - 1
-	if n >= poolSizeS29 {
-		return 0, nil, errPoolFmt("S29", poolSizeS29)
+func acquireSlotS29(h HandlerS29, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS29.take(c)
+	if !ok {
+		n = nextSlotS29.Add(1) - 1
+		if n >= poolSizeS29 {
+			return 0, nil, errPoolFmt("S29", poolSizeS29)
+		}
 	}
 	slotPoolS29[n].handler = h
-	return stubsS29[n], func() { slotPoolS29[n].handler = nil }, nil
+	return stubsS29[n], func() { slotPoolS29[n].handler = nil; freeSlotsS29.put(c, n) }, nil
 }
 
 // SlotsUsedS29 reports how many S29 stub slots have been consumed.

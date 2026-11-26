@@ -14,17 +14,21 @@ type HandlerS32 = func(recv unsafe.Pointer, ctx context.Context, level slog.Leve
 type methodDescS32 struct{ handler HandlerS32 }
 
 var (
-	slotPoolS32 [poolSizeS32]methodDescS32
-	nextSlotS32 atomic.Uint32
+	slotPoolS32  [poolSizeS32]methodDescS32
+	nextSlotS32  atomic.Uint32
+	freeSlotsS32 freeSlots
 )
 
-func acquireSlotS32(h HandlerS32) (pc uintptr, release func(), err error) {
-	n := nextSlotS32.Add(1) - 1
-	if n >= poolSizeS32 {
-		return 0, nil, errPoolFmt("S32", poolSizeS32)
+func acquireSlotS32(h HandlerS32, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS32.take(c)
+	if !ok {
+		n = nextSlotS32.Add(1) - 1
+		if n >= poolSizeS32 {
+			return 0, nil, errPoolFmt("S32", poolSizeS32)
+		}
 	}
 	slotPoolS32[n].handler = h
-	return stubsS32[n], func() { slotPoolS32[n].handler = nil }, nil
+	return stubsS32[n], func() { slotPoolS32[n].handler = nil; freeSlotsS32.put(c, n) }, nil
 }
 
 // SlotsUsedS32 reports how many S32 stub slots have been consumed.

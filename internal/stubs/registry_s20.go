@@ -13,17 +13,21 @@ type HandlerS20 = func(recv unsafe.Pointer, value string) error
 type methodDescS20 struct{ handler HandlerS20 }
 
 var (
-	slotPoolS20 [poolSizeS20]methodDescS20
-	nextSlotS20 atomic.Uint32
+	slotPoolS20  [poolSizeS20]methodDescS20
+	nextSlotS20  atomic.Uint32
+	freeSlotsS20 freeSlots
 )
 
-func acquireSlotS20(h HandlerS20) (pc uintptr, release func(), err error) {
-	n := nextSlotS20.Add(1) - 1
-	if n >= poolSizeS20 {
-		return 0, nil, errPoolFmt("S20", poolSizeS20)
+func acquireSlotS20(h HandlerS20, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS20.take(c)
+	if !ok {
+		n = nextSlotS20.Add(1) - 1
+		if n >= poolSizeS20 {
+			return 0, nil, errPoolFmt("S20", poolSizeS20)
+		}
 	}
 	slotPoolS20[n].handler = h
-	return stubsS20[n], func() { slotPoolS20[n].handler = nil }, nil
+	return stubsS20[n], func() { slotPoolS20[n].handler = nil; freeSlotsS20.put(c, n) }, nil
 }
 
 // SlotsUsedS20 reports how many S20 stub slots have been consumed.

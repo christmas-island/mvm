@@ -19,8 +19,10 @@ import (
 )
 
 // poolSize is the default per-shape slot count. Slots are consumed
-// monotonically (one per synthesized method, never reclaimed), so a shape's
-// size must exceed the most distinct attaches a single process performs.
+// one per synthesized method and only come back when the interpreter that
+// holds them is closed, for reuse by the same method of a layout-identical
+// type (recycle.go), so a shape's size must exceed the most distinct attaches
+// live at once in a process.
 // 256 covers every shape except S1 (Stringer/Error), whose cumulative attaches
 // in the interp test suite exceed it; S1 carries a larger Size below.
 const poolSize = 256

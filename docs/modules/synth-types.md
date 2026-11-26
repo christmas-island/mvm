@@ -121,8 +121,10 @@ Each past bug class is a violation of one of them.
 - **C5 -- Pinning and lifetime.**
   `addReflectOff` pins synth rtypes process-wide forever; reflect's offset table
   holds them and they are never collected.
-  So the stub pools must be bounded and slot reclamation is unsound -- a freed
-  slot's baked-in stub PC would later dispatch a different type's method.
+  So the stub pools must be bounded, and a freed slot's baked-in stub PC would
+  later dispatch whatever method takes the slot next.
+  A slot released by `Interp.Close` is therefore reused only for the same method
+  of a type with the same names and deep layout (see [stubs](stubs.md)).
 
 ## Keeping the projection in sync
 
