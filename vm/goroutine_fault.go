@@ -17,12 +17,13 @@ var ErrGoroutineFault = errors.New("vm: unrecovered goroutine panic")
 // goroutineFault carries the first unrecovered panic from a spawned goroutine,
 // shared by the root machine and every goroutine child.
 type goroutineFault struct {
-	mu      sync.Mutex
-	err     error         // first recorded fault, nil until one occurs
-	abort   chan struct{} // closed when err is first set, to wake channel waits
-	cont    bool          // policy: record+log only, don't propagate (mvm test)
-	spawned atomic.Bool   // a goroutine has been started (arms channel-wait aborts)
-	out     io.Writer     // where record surfaces the panic
+	mu       sync.Mutex
+	err      error         // first recorded fault, nil until one occurs
+	abort    chan struct{} // closed when err is first set, to wake channel waits
+	cont     bool          // policy: record+log only, don't propagate (mvm test)
+	spawned  atomic.Bool   // a goroutine has been started (arms channel-wait aborts)
+	out      io.Writer     // where record surfaces the panic
+	onRecord func()        // closes the interpreter's halt channel
 }
 
 func newGoroutineFault(out io.Writer, cont bool) *goroutineFault {
@@ -35,6 +36,7 @@ func (m *Machine) EnableGoroutineFaults() {
 	m.isRoot = true
 	if m.fault == nil {
 		m.fault = newGoroutineFault(m.err, m.faultContinue)
+		m.linkFault()
 	}
 }
 
@@ -47,6 +49,9 @@ func (g *goroutineFault) record(err error) {
 	g.err = err
 	_, _ = fmt.Fprintf(g.out, "\n-- panic in goroutine --\n%v\n", err)
 	close(g.abort)
+	if g.onRecord != nil {
+		g.onRecord()
+	}
 }
 
 func (g *goroutineFault) pending() error {
@@ -85,56 +90,78 @@ func (m *Machine) GoroutineFault() error {
 }
 
 // chanRecv receives from ch for the ChanRecv opcode. A receive that would
-// block also waits for the interrupt (interrupt.go) and, once a goroutine was
-// started, for a goroutine fault, so it cannot outlive either.
+// block also waits for the interpreter's halt channel, closed by an
+// interrupt or a goroutine fault (interrupt.go), so it cannot outlive
+// either.
 func (m *Machine) chanRecv(ch reflect.Value) (reflect.Value, bool) {
-	stop, fault := m.stopChan(), m.watchFault()
-	if stop == nil && !fault {
-		return ch.Recv()
+	c := m.control()
+	if c == nil {
+		if !m.watchFault() {
+			return ch.Recv()
+		}
+		chosen, v, ok := reflect.Select([]reflect.SelectCase{
+			{Dir: reflect.SelectRecv, Chan: ch},
+			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.fault.abort)},
+		})
+		if chosen == 1 {
+			panic(ErrGoroutineFault)
+		}
+		return v, ok
 	}
 	if v, ok := ch.TryRecv(); v.IsValid() {
 		return v, ok
 	}
-	cases := []reflect.SelectCase{
-		{Dir: reflect.SelectRecv, Chan: ch},
-		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(stop)},
-		{Dir: reflect.SelectRecv},
-	}
-	if fault {
-		cases[2].Chan = reflect.ValueOf(m.fault.abort)
-	}
+	cases := []reflect.SelectCase{{Dir: reflect.SelectRecv, Chan: ch}, {Dir: reflect.SelectRecv, Chan: c.haltV}}
 	chosen, v, ok := reflect.Select(cases)
-	switch chosen {
-	case 1:
+	if chosen == 0 {
+		return v, ok
+	}
+	m.halted()
+	cases[1].Chan = c.stopV
+	if chosen, v, ok = reflect.Select(cases); chosen == 1 {
 		panic(ErrInterrupted)
-	case 2:
-		panic(ErrGoroutineFault)
 	}
 	return v, ok
 }
 
 // chanSend sends v on ch for the ChanSend opcode; see chanRecv.
 func (m *Machine) chanSend(ch, v reflect.Value) {
-	stop, fault := m.stopChan(), m.watchFault()
-	if stop == nil && !fault {
-		ch.Send(v)
+	c := m.control()
+	if c == nil {
+		if !m.watchFault() {
+			ch.Send(v)
+			return
+		}
+		if chosen, _, _ := reflect.Select([]reflect.SelectCase{
+			{Dir: reflect.SelectSend, Chan: ch, Send: v},
+			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.fault.abort)},
+		}); chosen == 1 {
+			panic(ErrGoroutineFault)
+		}
 		return
 	}
 	if ch.TrySend(v) {
 		return
 	}
-	cases := []reflect.SelectCase{
-		{Dir: reflect.SelectSend, Chan: ch, Send: v},
-		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(stop)},
-		{Dir: reflect.SelectRecv},
+	cases := []reflect.SelectCase{{Dir: reflect.SelectSend, Chan: ch, Send: v}, {Dir: reflect.SelectRecv, Chan: c.haltV}}
+	if chosen, _, _ := reflect.Select(cases); chosen == 0 {
+		return
 	}
-	if fault {
-		cases[2].Chan = reflect.ValueOf(m.fault.abort)
-	}
-	switch chosen, _, _ := reflect.Select(cases); chosen {
-	case 1:
+	m.halted()
+	cases[1].Chan = c.stopV
+	if chosen, _, _ := reflect.Select(cases); chosen == 1 {
 		panic(ErrInterrupted)
-	case 2:
+	}
+}
+
+// halted is called when a wait saw the halt channel closed: it panics with
+// the interrupt, or with the goroutine fault when m aborts on one, and
+// otherwise returns so the wait goes on without the halt channel.
+func (m *Machine) halted() {
+	if m.Interrupted() {
+		panic(ErrInterrupted)
+	}
+	if m.watchFault() && m.fault.pending() != nil {
 		panic(ErrGoroutineFault)
 	}
 }

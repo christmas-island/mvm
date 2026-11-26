@@ -395,6 +395,7 @@ func (i *Interp) patchStdlibOverrides() {
 	i.patchFmtBindings()
 	i.patchStdStreams()
 	i.patchTimeSleep()
+	i.patchCancellation()
 	i.installExitVirtualization()
 	for importPath, fns := range stdlib.PackagePatchers() {
 		pkg, ok := i.Packages[importPath]
