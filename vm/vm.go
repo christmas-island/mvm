@@ -433,6 +433,11 @@ type Machine struct {
 	// sharedMethodStructs dedups a method-bearing struct's rtype across re-Evals on this Machine.
 	sharedMethodStructs map[derive.MethodStructKey]*derive.SynthReservation
 
+	// synthIfaces dedups named synth-interface rtypes (derive.ActiveIfaceCache).
+	// Shared by reference with runner and goroutine machines, so one interface
+	// keeps one rtype across every machine of an interpreter.
+	synthIfaces map[string]reflect.Type
+
 	synthReleasesMu sync.Mutex
 	synthReleases   []func() // nil this Machine's stub-pool handler slots.
 
@@ -492,7 +497,9 @@ const (
 )
 
 // NewMachine returns a pointer on a new Machine.
-func NewMachine() *Machine { return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr} }
+func NewMachine() *Machine {
+	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}}
+}
 
 // SetIO sets the I/O streams for the machine.
 func (m *Machine) SetIO(in io.Reader, out, err io.Writer) { m.in = in; m.out = out; m.err = err }
@@ -4750,6 +4757,7 @@ type runnerState struct {
 	funcFields      *funcFieldsTable // parent-owned; pointer-shared with runner
 	funcWrappers    *funcWrapTable   // parent-owned; pointer-shared with runner
 	typesByRtype    *typesIndex      // parent-owned; pointer-shared with runner
+	synthIfaces     map[string]reflect.Type
 	debugInfoFn     func() *DebugInfo
 	pool            *sync.Pool      // shared pool on the parent Machine
 	fault           *goroutineFault // shared goroutine-panic sink
@@ -4823,6 +4831,7 @@ func (m *Machine) captureRunnerState() *runnerState {
 		funcFields:      m.funcFields,
 		funcWrappers:    m.funcWrappers,
 		typesByRtype:    m.typesByRtype,
+		synthIfaces:     m.synthIfaces,
 		debugInfoFn:     m.debugInfoFn,
 		pool:            &m.runnerPool,
 		fault:           m.fault,
@@ -4851,6 +4860,7 @@ func (rs *runnerState) acquireRunner() *Machine {
 	m.funcFields = rs.funcFields
 	m.funcWrappers = rs.funcWrappers
 	m.typesByRtype = rs.typesByRtype
+	m.synthIfaces = rs.synthIfaces
 	m.debugInfoFn = rs.debugInfoFn
 	m.fault = rs.fault
 	m.faultContinue = rs.faultContinue
@@ -5306,6 +5316,7 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 		funcFields:      m.funcFields,
 		funcWrappers:    m.funcWrappers,
 		typesByRtype:    m.typesByRtype,
+		synthIfaces:     m.synthIfaces,
 		fault:           m.fault,
 		debugInfoFn:     m.debugInfoFn,
 		PanicNilCompat:  m.PanicNilCompat,
