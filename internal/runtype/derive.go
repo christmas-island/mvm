@@ -182,7 +182,9 @@ func buildArrayOf(n int, elem reflect.Type, elemRT, sliceRT *abiType) reflect.Ty
 
 	b := new(abiArrayType)
 	*b = *src
-	b.TFlag = 0
+	// Anonymous derived: no name/uncommon bits. tflagGCMaskOnDemand must stay:
+	// it says how to read the GCData copied from src (see gcMaskFlag).
+	b.TFlag = src.TFlag & gcMaskFlag
 	b.Hash = nextSyntheticHash()
 	b.PtrToThis = 0
 	b.Str = addReflectOff(unsafe.Pointer(
@@ -295,6 +297,7 @@ func RebuildArrayGeometry(arrRT reflect.Type) bool {
 	at.Align = src.Align
 	at.FieldAlign = src.FieldAlign
 	at.GCData = src.GCData
+	at.TFlag = at.TFlag&^gcMaskFlag | src.TFlag&gcMaskFlag // GCData's meaning travels with it
 	at.Equal = src.Equal
 	registerLayout(rt, src) // refresh the shadow so a containing map/array reads the new size
 	return true
