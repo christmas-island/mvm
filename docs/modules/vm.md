@@ -405,7 +405,7 @@ and cleanup goroutines, a goroutine a native library starts
 moment: if there is no mvm frame (an active `Run`, or the base of a native
 goroutine an interpreted `go` statement started), no host frame (outside
 the standard library and mvm) and no frame from `recoveringFrames`
-(net/http's server, `iter.Pull`), it records a `*CallbackPanicError` (the
+(net/http's server, `iter.Pull`, `testing.tRunner`), it records a `*CallbackPanicError` (the
 `*PanicError` with value, position and interpreted stack, plus the
 goroutine's creator) instead: `CallbackPanics` returns it, the
 `SetCallbackPanicHandler` handler receives it, and it becomes the
