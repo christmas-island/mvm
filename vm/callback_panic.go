@@ -113,8 +113,7 @@ func raiseCallback(life *lifetime, fault *goroutineFault, err error) {
 			return
 		}
 	}
-	var pe *PanicError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*PanicError](err); ok {
 		panic(reraisedPanic{pe}) // raw value for native recover; see reraisedPanic
 	}
 	panic(err)
@@ -133,6 +132,7 @@ var recoveringFrames = []string{
 	"net/http.(*timeoutHandler).ServeHTTP",   // re-raises it on the handler's goroutine
 	"iter.Pull.",                             // re-raises it in next or stop
 	"iter.Pull2.",
+	"testing.tRunner", // reports it as the test's failure, then ends the binary as go test does
 }
 
 // unrecoverable reports whether a panic raised by the caller's caller would
