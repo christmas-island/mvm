@@ -9,6 +9,10 @@
 //
 //	MVM_MEMPROBE=1 go test ./interptest/memprobe -run TestMemProbe -v
 //
+// On darwin it also reports the physical footprint: ps's RSS there keeps
+// counting pages the Go runtime has released (MADV_FREE_REUSABLE) until the
+// kernel reclaims them, so it tracks HeapSys, the heap's high-water mark.
+//
 // Knobs: MVM_MEMPROBE_N (loads per workload, default 300; the module workload
 // uses a tenth), MVM_MEMPROBE_CLOSE=close|release (default close),
 // MVM_MEMPROBE_ONLY=six|twenty|goldmark, MVM_MEMPROBE_PROFDIR=dir (write heap
@@ -96,8 +100,9 @@ func load(w *workload, mode closeMode) (string, error) {
 
 // sample is the process's memory after two GCs and FreeOSMemory.
 type sample struct {
-	ms  runtime.MemStats
-	rss uint64 // bytes; 0 if unknown
+	ms        runtime.MemStats
+	rss       uint64 // bytes; 0 if unknown
+	footprint uint64 // bytes; 0 if unknown (darwin only)
 }
 
 func settle() sample {
@@ -112,7 +117,35 @@ func settle() sample {
 	var s sample
 	runtime.ReadMemStats(&s.ms)
 	s.rss = rss()
+	s.footprint = footprint()
 	return s
+}
+
+// footprint returns the physical footprint on darwin (what the kernel
+// charges the process; unlike ps's RSS it drops when the Go runtime releases
+// pages with MADV_FREE_REUSABLE), or 0 elsewhere.
+func footprint() uint64 {
+	if runtime.GOOS != "darwin" {
+		return 0
+	}
+	out, err := exec.Command("vmmap", "-summary", strconv.Itoa(os.Getpid())).Output()
+	if err != nil {
+		return 0
+	}
+	for line := range strings.Lines(string(out)) {
+		v, ok := strings.CutPrefix(line, "Physical footprint:")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		mult := map[byte]float64{'K': 1 << 10, 'M': 1 << 20, 'G': 1 << 30}[v[len(v)-1]]
+		f, err := strconv.ParseFloat(v[:len(v)-1], 64)
+		if err != nil || mult == 0 {
+			return 0
+		}
+		return uint64(f * mult)
+	}
+	return 0
 }
 
 // rss returns the resident set size in bytes (ps works on darwin and linux).
@@ -143,6 +176,10 @@ func (r result) heapPerLoad() float64 { return per(r.from.ms.HeapAlloc, r.to.ms.
 
 func (r result) rssPerLoad() float64 { return per(r.from.rss, r.to.rss, r.loads) }
 
+func (r result) footprintPerLoad() float64 {
+	return per(r.from.footprint, r.to.footprint, r.loads)
+}
+
 // rows returns (metric, KiB per load) pairs for the report.
 func (r result) rows() [][2]string {
 	f, t, n := &r.from.ms, &r.to.ms, r.loads
@@ -150,7 +187,8 @@ func (r result) rows() [][2]string {
 		return [2]string{name, fmt.Sprintf("%.1f", per(a, b, n))}
 	}
 	return [][2]string{
-		row("RSS", r.from.rss, r.to.rss),
+		row("RSS (ps)", r.from.rss, r.to.rss),
+		row("physical footprint", r.from.footprint, r.to.footprint),
 		row("Sys", f.Sys, t.Sys),
 		row("HeapAlloc (live)", f.HeapAlloc, t.HeapAlloc),
 		row("HeapInuse", f.HeapInuse, t.HeapInuse),
@@ -262,9 +300,10 @@ func TestMemProbe(t *testing.T) {
 		r := probe(t, x.w, mode, x.warm, x.n, profdir)
 		results = append(results, r)
 		res, der, sif := derive.CacheSizes()
-		t.Logf("%s: %d loads (%s), %d interpreters collected; heap %.1f KiB/load, RSS %.1f KiB/load; "+
-			"derive caches now %d reservations, %d derived, %d synth ifaces",
-			r.name, r.loads, r.mode, collected.Load()-before, r.heapPerLoad(), r.rssPerLoad(), res, der, sif)
+		t.Logf("%s: %d loads (%s), %d interpreters collected; heap %.1f KiB/load, RSS %.1f KiB/load, "+
+			"footprint %.1f KiB/load; derive caches now %d reservations, %d derived, %d synth ifaces",
+			r.name, r.loads, r.mode, collected.Load()-before, r.heapPerLoad(), r.rssPerLoad(),
+			r.footprintPerLoad(), res, der, sif)
 	}
 	var b strings.Builder
 	b.WriteString("\n| KiB per load |")
