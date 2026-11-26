@@ -173,14 +173,48 @@ func TestRetiredSlotUnusedWithoutSweep(t *testing.T) {
 		t.Skip("sweep available; covered by TestRetiredSlotSweptForAnyLayout")
 	}
 	layout := reflect.StructOf([]reflect.StructField{{Name: "R", Type: reflect.TypeFor[uint16]()}})
+	other := reflect.StructOf([]reflect.StructField{{Name: "R", Type: reflect.TypeFor[uint32]()}})
 	pc1, _, retire1 := fillRetirableS1(t, layout, "a")
 	retire1()
 	if _, err := Sweep(); err == nil {
 		t.Fatal("Sweep succeeded without a sweep")
 	}
-	pc2, _, retire2 := fillRetirableS1(t, layout, "b")
+	pc2, _, retire2 := fillRetirableS1(t, other, "b")
 	defer retire2()
 	if pc2 == pc1 {
 		t.Fatal("retired slot reused without a sweep")
+	}
+}
+
+// A retired slot serves a reload of the same code (same class key) at once,
+// as a parked one does, and the sweep then leaves it to its new owner.
+func TestRetiredSlotReusedBySameKey(t *testing.T) {
+	t.Cleanup(discardSwept)
+	layout := reflect.StructOf([]reflect.StructField{{Name: "K", Type: reflect.TypeFor[int64]()}})
+	pc1, v1, retire1 := fillRetirableS1(t, layout, "old")
+	boxed := v1.Interface()
+	retire1()
+	used := SlotsUsedS1()
+	pc2, v2, retire2 := fillRetirableS1(t, layout, "new")
+	defer retire2()
+	if pc2 != pc1 || SlotsUsedS1() != used {
+		t.Fatal("same key: retired slot not reused")
+	}
+	if SweepAvailable() == nil {
+		if _, err := Sweep(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := v2.Interface().(fmt.Stringer).String(); got != "new" {
+		t.Errorf("new owner after sweep: got %q", got)
+	}
+	// The old type's own table was repointed at retirement.
+	wantStale(t, "old type after reuse", func() string { return boxed.(fmt.Stringer).String() })
+	freeSlotsS1.mu.Lock()
+	defer freeSlotsS1.mu.Unlock()
+	for _, n := range freeSlotsS1.swept {
+		if stubsS1[n] == pc1 {
+			t.Fatal("sweep took a slot that is live again")
+		}
 	}
 }

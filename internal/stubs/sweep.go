@@ -68,12 +68,11 @@ func Sweep() (int, error) {
 	repl := map[uintptr]uintptr{}
 	for _, f := range registeredPools() {
 		f.mu.Lock()
-		if len(f.retired) > 0 {
-			snaps = append(snaps, snap{f, f.retired})
-			for _, n := range f.retired {
+		if ns := f.takeRetired(); len(ns) > 0 {
+			snaps = append(snaps, snap{f, ns})
+			for _, n := range ns {
 				repl[f.stubs[n]] = f.trap
 			}
-			f.retired = nil
 		}
 		f.mu.Unlock()
 	}
@@ -88,7 +87,13 @@ func Sweep() (int, error) {
 	for _, s := range snaps {
 		s.f.mu.Lock()
 		if err != nil {
-			s.f.retired = append(s.f.retired, s.ns...)
+			// Back to retired, unkeyed: unusable, which is safe.
+			if s.f.retired == nil {
+				s.f.retired = map[uint32]string{}
+			}
+			for _, n := range s.ns {
+				s.f.retired[n] = ""
+			}
 		} else {
 			s.f.swept = append(s.f.swept, s.ns...)
 			s.f.nfree.Add(int32(len(s.ns)))

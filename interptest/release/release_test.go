@@ -178,6 +178,11 @@ func TestCloseAndReleaseStaleValue(t *testing.T) {
 	if err := stubs.SweepAvailable(); err != nil {
 		t.Skip(err)
 	}
+	// Sweep what earlier tests retired, so the swept slots on top after the
+	// sweep below are the first program's.
+	if _, err := stubs.Sweep(); err != nil {
+		t.Fatal(err)
+	}
 	var kept []any
 	sink := map[string]map[string]reflect.Value{
 		"example.com/sink": {"Put": reflect.ValueOf(func(v any) { kept = append(kept, v) })},
