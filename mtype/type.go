@@ -1032,7 +1032,7 @@ func attachDispatchless(rt reflect.Type, specs []runtype.MethodSpec) reflect.Typ
 	if len(specs) == 0 {
 		return rt
 	}
-	res, err := runtype.ReserveMethods(rt, rt.String(), "")
+	res, err := runtype.ReserveMethodsCap(rt, rt.String(), "", len(specs))
 	if err != nil {
 		return rt
 	}
