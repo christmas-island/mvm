@@ -99,7 +99,9 @@ func (i *Interp) Close() {
 // such a type before CloseAndRelease (it holds the raw code pointer), and a
 // call racing with CloseAndRelease or the sweep (a goroutine that loaded the
 // method pointer before the repointing and calls it after the slot was
-// reassigned) still run whatever method holds the slot by then.
+// reassigned) still run whatever method holds the slot by then. Under the
+// race detector the runtime cannot produce the heap dump, so no sweep runs and
+// the released slots stay unused, as if the interpreter had never closed.
 func (i *Interp) CloseAndRelease() {
 	i.RetireSynthMethods()
 	i.SetDebugInfo(nil)

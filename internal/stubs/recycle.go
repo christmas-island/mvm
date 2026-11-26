@@ -202,8 +202,10 @@ func (f *freeSlots) take(c *slotClass) (uint32, bool) {
 		return n, true
 	}
 	// Fresh slots first; once they are gone, sweep what retired interpreters
-	// left so it can serve this method.
-	if f.next == nil || f.next.Load() < f.cap || !f.hasRetired() {
+	// left so it can serve this method. Sweep even if this pool has nothing
+	// retired: a sweep running on another goroutine may hold its slots, and
+	// Sweep waits for it.
+	if f.next == nil || f.next.Load() < f.cap {
 		return 0, false
 	}
 	sweepRetired()
@@ -247,12 +249,6 @@ func (f *freeSlots) takeSwept() (uint32, bool) {
 	f.swept = f.swept[:len(f.swept)-1]
 	f.nfree.Add(-1)
 	return n, true
-}
-
-func (f *freeSlots) hasRetired() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.retired) > 0
 }
 
 // put parks slot n for reuse by c's class; a slot with no class is retired

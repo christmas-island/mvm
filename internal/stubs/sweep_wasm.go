@@ -15,3 +15,6 @@ func Sweep() (int, error) { return 0, nil }
 func SweepStats() (sweeps uint32, slots uint64, total time.Duration, lastErr error) {
 	return 0, 0, 0, nil
 }
+
+// SweepAvailable reports that wasm has nothing to sweep.
+func SweepAvailable() error { return nil }

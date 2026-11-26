@@ -124,7 +124,19 @@ func (*canaryT) String() string { return "canary" }
 
 var canary fmt.Stringer = new(canaryT)
 
-var errDumpFormat = errors.New("stubs: unrecognized heap dump")
+var (
+	errDumpFormat = errors.New("stubs: unrecognized heap dump")
+	errSweepRace  = errors.New("stubs: no itab sweep under the race detector (runtime/debug.WriteHeapDump faults on reflect-built types)")
+)
+
+// SweepAvailable reports why Sweep cannot run in this build, or nil. Without a
+// sweep, slots retired by CloseAndRelease are never reused.
+func SweepAvailable() error {
+	if raceBuild {
+		return errSweepRace
+	}
+	return nil
+}
 
 // Heap dump record tags (runtime/heapdump.go).
 const (
@@ -138,6 +150,9 @@ const (
 // It checks the result against a known itab and fails rather than return a
 // partial list.
 func runtimeItabs() ([]unsafe.Pointer, error) {
+	if err := SweepAvailable(); err != nil {
+		return nil, err
+	}
 	// The dump's head (params and itab records) usually fits a socket buffer;
 	// a truncated head fails to parse and the whole dump goes to a file.
 	if head, ok := dumpHeadViaSocket(); ok {
