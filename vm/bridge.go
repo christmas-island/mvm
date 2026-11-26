@@ -53,6 +53,11 @@ func hookTarget(rv reflect.Value, name string) (reflect.Value, bool) {
 	if _, ok := nativeMethodHooks[hookKey{rv.Type(), name}]; ok {
 		return rv, true
 	}
+	if rv.Kind() != reflect.Pointer && rv.CanAddr() {
+		if _, ok := nativeMethodHooks[hookKey{reflect.PointerTo(rv.Type()), name}]; ok {
+			return rv.Addr(), true
+		}
+	}
 	if !hookedMethodNames[name] {
 		return reflect.Value{}, false
 	}

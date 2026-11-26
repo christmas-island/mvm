@@ -386,6 +386,20 @@ an atomic flag and a channel closed on interrupt.
   read, an accept loop, `sync.Cond.Wait`), which no interrupt can reach; it
   stops at its next poll once that call returns. A releasing close
   (`Interp.CloseAndRelease`) is only safe at zero.
+- **Native blocking calls.** Each interpreter has a context (`Context`),
+  cancelled by `Interrupt`; `SetContext(ctx)` interrupts it when a host
+  context ends. `OnInterrupt` and `CloseOnInterrupt` (weakly held) register
+  what an interrupt closes. `interp/cancel.go` binds, in the interpreter's
+  own package tables, the standard-library entry points that block in
+  native code to forms that carry that context and register what they
+  open: `net` dials and listens, `crypto/tls` dials and listens,
+  `os.Pipe`/`Open`/`OpenFile`, `io.Pipe`, `net.Pipe`, `exec.Command`
+  (as `CommandContext`), `http.NewRequest`/`Get`/`Head`/`Post`/`PostForm`/
+  `ListenAndServe`/`Serve`, and `httptest` servers. Native method hooks do
+  the same for `net.Dialer`, `net.ListenConfig`, the TCP and Unix
+  listeners' `Accept`, `http.Client` and `http.Server`. Closing the
+  resource is what wakes a Read or Accept already parked on it. A value the
+  host bound itself is left alone.
 
 ### Panics, defer, recover, and diagnostics
 
