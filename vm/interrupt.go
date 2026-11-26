@@ -62,6 +62,13 @@ type control struct {
 	flag     atomic.Bool
 	stop     chan struct{} // closed by interrupt
 	stopOnce sync.Once
+	stopV    reflect.Value // stop, for reflect.Select
+
+	// halt is closed by an interrupt or a goroutine fault: blocking waits
+	// select on it, one channel for both, and then tell which it was.
+	halt     chan struct{}
+	haltOnce sync.Once
+	haltV    reflect.Value
 
 	mu   sync.Mutex
 	live int           // goroutines executing for the interpreter (see enter)
@@ -95,7 +102,18 @@ type stopEntry struct {
 
 func newControl() *control {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &control{stop: make(chan struct{}), ctx: ctx, cancel: cancel}
+	c := &control{stop: make(chan struct{}), halt: make(chan struct{}), ctx: ctx, cancel: cancel}
+	c.stopV, c.haltV = reflect.ValueOf(c.stop), reflect.ValueOf(c.halt)
+	return c
+}
+
+func (c *control) haltNow() { c.haltOnce.Do(func() { close(c.halt) }) }
+
+// linkFault makes m's goroutine fault close the interpreter's halt channel.
+func (m *Machine) linkFault() {
+	if c := m.control(); c != nil && m.fault != nil {
+		m.fault.onRecord = c.haltNow
+	}
 }
 
 // noInterrupt is the flag of a Machine made without NewMachine; it is never set.
@@ -129,6 +147,7 @@ func (c *control) interrupt() {
 	c.flag.Store(true)
 	c.stopOnce.Do(func() {
 		close(c.stop)
+		c.haltNow()
 		c.cancel()
 		c.stopMu.Lock()
 		c.stopped = true
