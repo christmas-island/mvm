@@ -86,7 +86,7 @@ const (
 	poolSizeWpppii_pp      = 64
 	poolSizeWpppii_ppp     = 64
 	poolSizeWpppipii_      = 64
-	poolSizeWpppp_         = 64
+	poolSizeWpppp_         = 256
 	poolSizeWpppp_ppi      = 64
 	poolSizeWppppp_        = 64
 	poolSizeWpppppii_i     = 128
