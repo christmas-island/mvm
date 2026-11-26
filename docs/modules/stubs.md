@@ -89,9 +89,21 @@ flowchart LR
     disp --> h["HandlerSN closure<br/>(re-enters interpreter)"]
 ```
 
-Slots are claimed monotonically and never reclaimed (the per-shape counter has
-no safe decrement under concurrent attaches); `release` only nils a slot's
-handler to free its closure captures.
+A fresh slot comes from a monotonic per-shape counter.
+`release` (run by `Interp.Close`) nils a slot's handler to free its closure
+captures and parks the slot in its pool's free list (`recycle.go`).
+Because the slot's PC stays baked into its rtype forever (see
+[synth-types](synth-types.md) C5), a parked slot is handed out again only to a
+method with the same name whose receiver and signature have the same names and
+deep layout (kinds, sizes, field offsets, element types, interface method sets);
+anything else takes a fresh slot.
+That is exactly what an interpreter reloading the same code attaches, so
+repeated loads in one process reuse the same slots instead of exhausting the
+pool.
+A stale value of a closed interpreter's type that is still dispatched (which
+`Close` forbids) then reaches the new interpreter's method of the identical
+type, rather than a missing handler.
+A receiver whose type graph holds two layouts under one name is never parked.
 S1 carries 3072 slots (Stringer/Error are the most-attached shape) and S38 5120
 (protobuf markers); the rest default to 256.
 
@@ -215,9 +227,10 @@ after editing the shape catalog in `gen_pools.go`.
 
 ## Open questions / TODOs
 
-- Pools are finite; a process attaching more distinct methods of one shape than
-  its pool holds errors out (`stubs: shape SN stub pool exhausted`). Sizes are a
+- Pools are finite; a process holding more live methods of one shape than its
+  pool holds errors out (`stubs: shape SN stub pool exhausted`). Sizes are a
   static guess tuned to the test suite (wasm carries no pools; see above).
+  Interpreters that are dropped without `Close` keep their slots.
 - A new *typed* shape is append-only edits to `gen_pools.go` + a hand-written
   `registry_sN.go` + a `detectShape`/handler case (in `vm/synth_bridge.go` for a
   generic shape, or `stdlib/synth_method_shapes.go` for a stdlib-specific one);

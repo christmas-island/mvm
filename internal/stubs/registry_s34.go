@@ -13,17 +13,21 @@ type HandlerS34 = func(recv unsafe.Pointer, attrs []slog.Attr) slog.Handler
 type methodDescS34 struct{ handler HandlerS34 }
 
 var (
-	slotPoolS34 [poolSizeS34]methodDescS34
-	nextSlotS34 atomic.Uint32
+	slotPoolS34  [poolSizeS34]methodDescS34
+	nextSlotS34  atomic.Uint32
+	freeSlotsS34 freeSlots
 )
 
-func acquireSlotS34(h HandlerS34) (pc uintptr, release func(), err error) {
-	n := nextSlotS34.Add(1) - 1
-	if n >= poolSizeS34 {
-		return 0, nil, errPoolFmt("S34", poolSizeS34)
+func acquireSlotS34(h HandlerS34, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS34.take(c)
+	if !ok {
+		n = nextSlotS34.Add(1) - 1
+		if n >= poolSizeS34 {
+			return 0, nil, errPoolFmt("S34", poolSizeS34)
+		}
 	}
 	slotPoolS34[n].handler = h
-	return stubsS34[n], func() { slotPoolS34[n].handler = nil }, nil
+	return stubsS34[n], func() { slotPoolS34[n].handler = nil; freeSlotsS34.put(c, n) }, nil
 }
 
 // SlotsUsedS34 reports how many S34 stub slots have been consumed.

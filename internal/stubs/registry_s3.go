@@ -13,17 +13,21 @@ type HandlerS3 = func(recv unsafe.Pointer, data []byte) error
 type methodDescS3 struct{ handler HandlerS3 }
 
 var (
-	slotPoolS3 [poolSizeS3]methodDescS3
-	nextSlotS3 atomic.Uint32
+	slotPoolS3  [poolSizeS3]methodDescS3
+	nextSlotS3  atomic.Uint32
+	freeSlotsS3 freeSlots
 )
 
-func acquireSlotS3(h HandlerS3) (pc uintptr, release func(), err error) {
-	n := nextSlotS3.Add(1) - 1
-	if n >= poolSizeS3 {
-		return 0, nil, errPoolFmt("S3", poolSizeS3)
+func acquireSlotS3(h HandlerS3, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS3.take(c)
+	if !ok {
+		n = nextSlotS3.Add(1) - 1
+		if n >= poolSizeS3 {
+			return 0, nil, errPoolFmt("S3", poolSizeS3)
+		}
 	}
 	slotPoolS3[n].handler = h
-	return stubsS3[n], func() { slotPoolS3[n].handler = nil }, nil
+	return stubsS3[n], func() { slotPoolS3[n].handler = nil; freeSlotsS3.put(c, n) }, nil
 }
 
 // SlotsUsedS3 reports how many S3 stub slots have been consumed.

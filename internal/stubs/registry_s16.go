@@ -14,17 +14,21 @@ type HandlerS16 = func(recv unsafe.Pointer, d *xml.Decoder, start xml.StartEleme
 type methodDescS16 struct{ handler HandlerS16 }
 
 var (
-	slotPoolS16 [poolSizeS16]methodDescS16
-	nextSlotS16 atomic.Uint32
+	slotPoolS16  [poolSizeS16]methodDescS16
+	nextSlotS16  atomic.Uint32
+	freeSlotsS16 freeSlots
 )
 
-func acquireSlotS16(h HandlerS16) (pc uintptr, release func(), err error) {
-	n := nextSlotS16.Add(1) - 1
-	if n >= poolSizeS16 {
-		return 0, nil, errPoolFmt("S16", poolSizeS16)
+func acquireSlotS16(h HandlerS16, c *slotClass) (pc uintptr, release func(), err error) {
+	n, ok := freeSlotsS16.take(c)
+	if !ok {
+		n = nextSlotS16.Add(1) - 1
+		if n >= poolSizeS16 {
+			return 0, nil, errPoolFmt("S16", poolSizeS16)
+		}
 	}
 	slotPoolS16[n].handler = h
-	return stubsS16[n], func() { slotPoolS16[n].handler = nil }, nil
+	return stubsS16[n], func() { slotPoolS16[n].handler = nil; freeSlotsS16.put(c, n) }, nil
 }
 
 // SlotsUsedS16 reports how many S16 stub slots have been consumed.

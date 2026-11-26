@@ -88,6 +88,8 @@ interpreter via `CallFunc` when the stub fires.
 - Per-shape stub pools are finite and consumed monotonically (S1 = 2048 slots,
   others 256); a process that attaches more distinct methods of one shape than
   its pool holds errors out.
+  (Later: `Interp.Close` returns slots for reuse by the same method of a
+  layout-identical type; see docs/modules/stubs.md.)
 - Synthesized rtypes pollute the process `itab` cache; REPL redefinition leaks.
 - `Type.Method(i).Func.Call` uses a type's natural ABI and does not work for
   non-direct kinds (interface/`Value.MethodByName().Call` dispatch, the common

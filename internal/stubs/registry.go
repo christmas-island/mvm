@@ -159,12 +159,13 @@ type Method struct {
 
 var errInvalidHandlerType = errors.New("stubs: handler type does not match shape")
 
-// acquireSlot claims a free slot in the pool for m.Shape, returning the stub PC
-// (Ifn/Tfn) and a release closure that nils the slot's handler (freeing its
-// *Machine/*Type capture). The slot index stays consumed (counter is monotonic).
-func acquireSlot(m Method) (pc uintptr, release func(), err error) {
+// acquireSlot claims a slot in the pool for m.Shape, reusing a released slot of
+// the same class c (see slotClass) or else the next fresh one, and returns the
+// stub PC (Ifn/Tfn) and a release closure that nils the slot's handler (freeing
+// its *Machine/*Type capture) and parks the slot for reuse by class c.
+func acquireSlot(m Method, c *slotClass) (pc uintptr, release func(), err error) {
 	if m.WordKey != "" {
-		return acquireWordSlot(m.WordKey, m.Core)
+		return acquireWordSlot(m.WordKey, m.Core, c)
 	}
 	switch m.Shape {
 	case ShapeS1:
@@ -172,229 +173,229 @@ func acquireSlot(m Method) (pc uintptr, release func(), err error) {
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS1(h)
+		return acquireSlotS1(h, c)
 	case ShapeS2:
 		h, ok := m.Handler.(HandlerS2)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS2(h)
+		return acquireSlotS2(h, c)
 	case ShapeS3:
 		h, ok := m.Handler.(HandlerS3)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS3(h)
+		return acquireSlotS3(h, c)
 	case ShapeS4:
 		h, ok := m.Handler.(HandlerS4)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS4(h)
+		return acquireSlotS4(h, c)
 	case ShapeS5:
 		h, ok := m.Handler.(HandlerS5)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS5(h)
+		return acquireSlotS5(h, c)
 	case ShapeS6:
 		h, ok := m.Handler.(HandlerS6)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS6(h)
+		return acquireSlotS6(h, c)
 	case ShapeS7:
 		h, ok := m.Handler.(HandlerS7)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS7(h)
+		return acquireSlotS7(h, c)
 	case ShapeS8:
 		h, ok := m.Handler.(HandlerS8)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS8(h)
+		return acquireSlotS8(h, c)
 	case ShapeS9:
 		h, ok := m.Handler.(HandlerS9)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS9(h)
+		return acquireSlotS9(h, c)
 	case ShapeS10:
 		h, ok := m.Handler.(HandlerS10)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS10(h)
+		return acquireSlotS10(h, c)
 	case ShapeS11:
 		h, ok := m.Handler.(HandlerS11)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS11(h)
+		return acquireSlotS11(h, c)
 	case ShapeS12:
 		h, ok := m.Handler.(HandlerS12)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS12(h)
+		return acquireSlotS12(h, c)
 	case ShapeS13:
 		h, ok := m.Handler.(HandlerS13)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS13(h)
+		return acquireSlotS13(h, c)
 	case ShapeS14:
 		h, ok := m.Handler.(HandlerS14)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS14(h)
+		return acquireSlotS14(h, c)
 	case ShapeS15:
 		h, ok := m.Handler.(HandlerS15)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS15(h)
+		return acquireSlotS15(h, c)
 	case ShapeS16:
 		h, ok := m.Handler.(HandlerS16)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS16(h)
+		return acquireSlotS16(h, c)
 	case ShapeS17:
 		h, ok := m.Handler.(HandlerS17)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS17(h)
+		return acquireSlotS17(h, c)
 	case ShapeS18:
 		h, ok := m.Handler.(HandlerS18)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS18(h)
+		return acquireSlotS18(h, c)
 	case ShapeS19:
 		h, ok := m.Handler.(HandlerS19)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS19(h)
+		return acquireSlotS19(h, c)
 	case ShapeS20:
 		h, ok := m.Handler.(HandlerS20)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS20(h)
+		return acquireSlotS20(h, c)
 	case ShapeS21:
 		h, ok := m.Handler.(HandlerS21)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS21(h)
+		return acquireSlotS21(h, c)
 	case ShapeS22:
 		h, ok := m.Handler.(HandlerS22)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS22(h)
+		return acquireSlotS22(h, c)
 	case ShapeS23:
 		h, ok := m.Handler.(HandlerS23)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS23(h)
+		return acquireSlotS23(h, c)
 	case ShapeS24:
 		h, ok := m.Handler.(HandlerS24)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS24(h)
+		return acquireSlotS24(h, c)
 	case ShapeS25:
 		h, ok := m.Handler.(HandlerS25)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS25(h)
+		return acquireSlotS25(h, c)
 	case ShapeS26:
 		h, ok := m.Handler.(HandlerS26)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS26(h)
+		return acquireSlotS26(h, c)
 	case ShapeS27:
 		h, ok := m.Handler.(HandlerS27)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS27(h)
+		return acquireSlotS27(h, c)
 	case ShapeS28:
 		h, ok := m.Handler.(HandlerS28)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS28(h)
+		return acquireSlotS28(h, c)
 	case ShapeS29:
 		h, ok := m.Handler.(HandlerS29)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS29(h)
+		return acquireSlotS29(h, c)
 	case ShapeS30:
 		h, ok := m.Handler.(HandlerS30)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS30(h)
+		return acquireSlotS30(h, c)
 	case ShapeS31:
 		h, ok := m.Handler.(HandlerS31)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS31(h)
+		return acquireSlotS31(h, c)
 	case ShapeS32:
 		h, ok := m.Handler.(HandlerS32)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS32(h)
+		return acquireSlotS32(h, c)
 	case ShapeS33:
 		h, ok := m.Handler.(HandlerS33)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS33(h)
+		return acquireSlotS33(h, c)
 	case ShapeS34:
 		h, ok := m.Handler.(HandlerS34)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS34(h)
+		return acquireSlotS34(h, c)
 	case ShapeS35:
 		h, ok := m.Handler.(HandlerS35)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS35(h)
+		return acquireSlotS35(h, c)
 	case ShapeS36:
 		h, ok := m.Handler.(HandlerS36)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS36(h)
+		return acquireSlotS36(h, c)
 	case ShapeS37:
 		h, ok := m.Handler.(HandlerS37)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS37(h)
+		return acquireSlotS37(h, c)
 	case ShapeS38:
 		h, ok := m.Handler.(HandlerS38)
 		if !ok {
 			return 0, nil, errInvalidHandlerType
 		}
-		return acquireSlotS38(h)
+		return acquireSlotS38(h, c)
 	}
 	return 0, nil, fmt.Errorf("stubs: unknown shape %d", m.Shape)
 }
