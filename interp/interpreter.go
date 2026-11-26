@@ -125,7 +125,12 @@ func forgetTypes(arg any) {
 //
 // It also drops the interpreter's entries in mvm's process-global type caches
 // at once, which the contract makes safe.
+// CloseAndRelease is only safe once no goroutine of i is running: after a
+// run that returned with none left, or after Stop (or Interrupt and
+// WaitStopped) returned nil. It also interrupts i, so a timer or other
+// native callback that fires later returns without running interpreted code.
 func (i *Interp) CloseAndRelease() {
+	i.Interrupt()
 	i.RetireSynthMethods()
 	i.SetDebugInfo(nil)
 	derive.ForgetOwner(i.Owner(), i.OwnedTypes())
@@ -134,6 +139,9 @@ func (i *Interp) CloseAndRelease() {
 // ErrStaleMethodCall is matched (errors.Is) by the panic value of a method call
 // on a value of an interpreter closed with CloseAndRelease.
 var ErrStaleMethodCall = stubs.ErrStaleCall
+
+// ErrInterrupted is the error of a run stopped by Interrupt or Stop.
+var ErrInterrupted = vm.ErrInterrupted
 
 // UseHostStdio keeps the interpreted os.Std{in,out,err} bound to the host's real
 // *os.File streams rather than routing them through the machine's SetIO writers.
@@ -386,6 +394,8 @@ func (i *Interp) registerSentinel(pkgPath, name, sym string) {
 func (i *Interp) patchStdlibOverrides() {
 	i.patchFmtBindings()
 	i.patchStdStreams()
+	i.patchTimeSleep()
+	i.patchCancellation()
 	i.installExitVirtualization()
 	for importPath, fns := range stdlib.PackagePatchers() {
 		pkg, ok := i.Packages[importPath]
@@ -426,6 +436,13 @@ func (i *Interp) patchFmtBindings() {
 // to patch, e.g. on wasm) and write to os.Stdout directly: a host *os.File would
 // reach the real fd 1, escaping a caller's SetIO writer (an embedder's buffer, a
 // test's bytes.Buffer). The streams are used only as io.Reader/io.Writer.
+// patchTimeSleep binds time.Sleep to a sleep that Interrupt wakes.
+func (i *Interp) patchTimeSleep() {
+	if pkg, ok := i.Packages["time"]; ok && pkg.Bin {
+		pkg.Values["Sleep"] = vm.FromReflect(reflect.ValueOf(i.Sleep))
+	}
+}
+
 type machineStream struct {
 	m   *vm.Machine
 	std int // 0=stdin, 1=stdout, 2=stderr

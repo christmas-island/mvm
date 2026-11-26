@@ -441,6 +441,33 @@ func TestBoom(t *testing.T) {
 	}
 }
 
+// A subtest body runs on a goroutine native testing starts (tRunner): its
+// panic must still reach testing, which fails the subtest and ends the run as
+// go test does, rather than be recorded as a callback panic while the subtest
+// passes.
+func TestSubtestPanicFailsSubtest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short")
+	}
+	bin := buildMvm(t)
+	const src = `package x
+
+import "testing"
+
+func TestBoom(t *testing.T) {
+	t.Run("sub", func(t *testing.T) { panic("boom in subtest") })
+}
+`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x_test.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exit, out := runMvmTest(t, bin, dir, "-v")
+	if exit == 0 || !strings.Contains(out, "--- FAIL: TestBoom/sub") || strings.Contains(out, "panic in callback") {
+		t.Fatalf("exit %d, want the subtest to fail and the run to abort:\n%s", exit, out)
+	}
+}
+
 func TestRunEvalEcho(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short")

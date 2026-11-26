@@ -115,13 +115,6 @@ func detectGenericShape(sig reflect.Type) (stubs.Shape, bool) {
 	return 0, false
 }
 
-// raiseMethodErr panics with err, re-raising an interpreter PanicError as its raw
-// value so a native recover sees the original.
-func raiseMethodErr(err error) {
-	vm.RaiseIfInterpPanic(err)
-	panic(err)
-}
-
 func reflectToErrorSlice(v reflect.Value) []error {
 	v = runtype.Exportable(v)
 	if !v.IsValid() || v.Kind() != reflect.Slice || v.IsNil() {
@@ -146,7 +139,7 @@ func makeGenericHandler(call vm.SynthCall, shape stubs.Shape) any {
 		return func(recv unsafe.Pointer) string {
 			out, err := call.Invoke(recv, nil)
 			if err != nil {
-				raiseMethodErr(err)
+				call.Raise(err)
 			}
 			if len(out) != 1 {
 				return ""
@@ -247,7 +240,7 @@ func makeGenericHandler(call vm.SynthCall, shape stubs.Shape) any {
 		return func(recv unsafe.Pointer, p []byte) (int, error) {
 			out, err := call.Invoke(recv, []reflect.Value{reflect.ValueOf(p)})
 			if err != nil {
-				vm.RaiseIfInterpPanic(err)
+				call.RaiseIfPanic(err)
 				return 0, err
 			}
 			if len(out) != 2 {
@@ -259,7 +252,7 @@ func makeGenericHandler(call vm.SynthCall, shape stubs.Shape) any {
 		return func(recv unsafe.Pointer, st fmt.State, verb rune) {
 			_, err := call.Invoke(recv, []reflect.Value{reflect.ValueOf(&st).Elem(), reflect.ValueOf(verb)})
 			if err != nil {
-				raiseMethodErr(err)
+				call.Raise(err)
 			}
 		}
 	case stubs.ShapeS17:
@@ -312,7 +305,7 @@ func makeGenericHandler(call vm.SynthCall, shape stubs.Shape) any {
 		return func(recv unsafe.Pointer) (rune, int, error) {
 			out, err := call.Invoke(recv, nil)
 			if err != nil {
-				vm.RaiseIfInterpPanic(err)
+				call.RaiseIfPanic(err)
 				return 0, 0, err
 			}
 			if len(out) != 3 {
@@ -324,7 +317,7 @@ func makeGenericHandler(call vm.SynthCall, shape stubs.Shape) any {
 		return func(recv unsafe.Pointer) {
 			_, err := call.Invoke(recv, nil)
 			if err != nil {
-				raiseMethodErr(err)
+				call.Raise(err)
 			}
 		}
 	}
