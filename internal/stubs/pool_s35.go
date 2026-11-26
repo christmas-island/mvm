@@ -780,6 +780,9 @@ func stubS35_254(recv unsafe.Pointer, name string) slog.Handler { return dispatc
 //go:noinline
 func stubS35_255(recv unsafe.Pointer, name string) slog.Handler { return dispatchS35(255, recv, name) }
 
+//go:noinline
+func trapS35(recv unsafe.Pointer, name string) slog.Handler { panic(staleCall("S35")) }
+
 var stubsS35 [poolSizeS35]uintptr
 
 func init() {
@@ -1039,4 +1042,5 @@ func init() {
 	stubsS35[253] = runtype.FuncPC(stubS35_253)
 	stubsS35[254] = runtype.FuncPC(stubS35_254)
 	stubsS35[255] = runtype.FuncPC(stubS35_255)
+	freeSlotsS35.setPool("S35", &nextSlotS35, poolSizeS35, stubsS35[:], runtype.FuncPC(trapS35))
 }

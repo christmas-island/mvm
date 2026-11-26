@@ -125,6 +125,9 @@ Each past bug class is a violation of one of them.
   later dispatch whatever method takes the slot next.
   A slot released by `Interp.Close` is therefore reused only for the same method
   of a type with the same names and deep layout (see [stubs](stubs.md)).
+  `Interp.CloseAndRelease` instead repoints the closed types' method tables and
+  (by a sweep) the runtime's itabs to a trap, after which the slot serves any
+  method; the rtypes themselves stay pinned.
 
 ## Keeping the projection in sync
 

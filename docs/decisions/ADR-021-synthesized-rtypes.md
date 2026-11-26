@@ -89,7 +89,9 @@ interpreter via `CallFunc` when the stub fires.
   others 256); a process that attaches more distinct methods of one shape than
   its pool holds errors out.
   (Later: `Interp.Close` returns slots for reuse by the same method of a
-  layout-identical type; see docs/modules/stubs.md.)
+  layout-identical type; `Interp.CloseAndRelease` returns them for any method
+  after repointing the closed types and their itabs to a trap; see
+  docs/modules/stubs.md.)
 - Synthesized rtypes pollute the process `itab` cache; REPL redefinition leaks.
 - `Type.Method(i).Func.Call` uses a type's natural ABI and does not work for
   non-direct kinds (interface/`Value.MethodByName().Call` dispatch, the common

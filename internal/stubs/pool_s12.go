@@ -1547,6 +1547,9 @@ func stubS12_510(recv unsafe.Pointer) any { return dispatchS12(510, recv) }
 //go:noinline
 func stubS12_511(recv unsafe.Pointer) any { return dispatchS12(511, recv) }
 
+//go:noinline
+func trapS12(recv unsafe.Pointer) any { panic(staleCall("S12")) }
+
 var stubsS12 [poolSizeS12]uintptr
 
 func init() {
@@ -2062,4 +2065,5 @@ func init() {
 	stubsS12[509] = runtype.FuncPC(stubS12_509)
 	stubsS12[510] = runtype.FuncPC(stubS12_510)
 	stubsS12[511] = runtype.FuncPC(stubS12_511)
+	freeSlotsS12.setPool("S12", &nextSlotS12, poolSizeS12, stubsS12[:], runtype.FuncPC(trapS12))
 }

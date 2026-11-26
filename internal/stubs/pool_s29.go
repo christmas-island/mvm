@@ -1291,6 +1291,9 @@ func stubS29_255(recv unsafe.Pointer, pattern string) ([]string, error) {
 	return dispatchS29(255, recv, pattern)
 }
 
+//go:noinline
+func trapS29(recv unsafe.Pointer, pattern string) ([]string, error) { panic(staleCall("S29")) }
+
 var stubsS29 [poolSizeS29]uintptr
 
 func init() {
@@ -1550,4 +1553,5 @@ func init() {
 	stubsS29[253] = runtype.FuncPC(stubS29_253)
 	stubsS29[254] = runtype.FuncPC(stubS29_254)
 	stubsS29[255] = runtype.FuncPC(stubS29_255)
+	freeSlotsS29.setPool("S29", &nextSlotS29, poolSizeS29, stubsS29[:], runtype.FuncPC(trapS29))
 }

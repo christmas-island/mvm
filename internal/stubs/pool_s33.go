@@ -1293,6 +1293,11 @@ func stubS33_255(recv unsafe.Pointer, ctx context.Context, record slog.Record) e
 	return dispatchS33(255, recv, ctx, record)
 }
 
+//go:noinline
+func trapS33(recv unsafe.Pointer, ctx context.Context, record slog.Record) error {
+	panic(staleCall("S33"))
+}
+
 var stubsS33 [poolSizeS33]uintptr
 
 func init() {
@@ -1552,4 +1557,5 @@ func init() {
 	stubsS33[253] = runtype.FuncPC(stubS33_253)
 	stubsS33[254] = runtype.FuncPC(stubS33_254)
 	stubsS33[255] = runtype.FuncPC(stubS33_255)
+	freeSlotsS33.setPool("S33", &nextSlotS33, poolSizeS33, stubsS33[:], runtype.FuncPC(trapS33))
 }
