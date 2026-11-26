@@ -29,6 +29,16 @@ const (
 	tflagDirectIface    uint8 = 1 << 5
 )
 
+// gcMaskFlag must be copied together with GCData: when set, GCData is not the
+// pointer bitmap but the address of a slot where the runtime caches a lazily
+// built one, so a type carrying a copied GCData without the flag is scanned
+// through the bytes of that slot (nil at first: no pointers seen at all) and the
+// GC frees memory the value still references. Go 1.27 lowered
+// abi.MaxPtrmaskBytes from 2048 to 16, so the flag is now set on every type with
+// more than 1024 pointer bytes ([129]*T, a 129-entry func table), not only on
+// types over 128 KiB of pointers.
+const gcMaskFlag = tflagGCMaskOnDemand
+
 // Kind values, mirroring internal/abi.Kind iota positions.
 // Values are stable since 1.18.
 const (
