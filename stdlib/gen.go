@@ -12,9 +12,10 @@
 //
 // Stdlib packages that are listed below but currently produce only a stub
 // (just "package stdlib") because every exported symbol is generic and so
-// cannot be reflect-bound: crypto/hkdf, crypto/pbkdf2, unique, weak (the
-// canonical set is GenericOnly in incompat.go). The stubs are kept so that
-// bindings appear automatically once these packages gain non-generic exports.
+// cannot be reflect-bound: crypto/hkdf, crypto/pbkdf2 (the canonical set is
+// GenericOnly in incompat.go), and unique, weak, which load as interpreted
+// source from the std module instead. The stubs are kept so that bindings
+// appear automatically once these packages gain non-generic exports.
 
 package stdlib
 
@@ -46,6 +47,7 @@ package stdlib
 //go:generate go run ../cmd/extract -stdlib crypto/hpke $GOROOT/src/crypto/hpke
 //go:generate go run ../cmd/extract -stdlib crypto/md5 $GOROOT/src/crypto/md5
 //go:generate go run ../cmd/extract -stdlib crypto/mlkem $GOROOT/src/crypto/mlkem
+//go:generate go run ../cmd/extract -stdlib crypto/mlkem/mlkemtest $GOROOT/src/crypto/mlkem/mlkemtest
 //go:generate go run ../cmd/extract -stdlib crypto/pbkdf2 $GOROOT/src/crypto/pbkdf2
 //go:generate go run ../cmd/extract -stdlib crypto/rand $GOROOT/src/crypto/rand
 //go:generate go run ../cmd/extract -stdlib crypto/rc4 $GOROOT/src/crypto/rc4
