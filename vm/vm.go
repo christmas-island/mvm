@@ -503,14 +503,17 @@ const (
 
 // NewMachine returns a pointer on a new Machine.
 func NewMachine() *Machine {
-	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner()}}
+	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner(), ctl: newControl()}}
 }
 
 // lifetime is a token whose collection means no machine of an interpreter
 // is left: neither the root, a runner a native callback may still borrow,
 // nor an interpreted goroutine. It carries the interpreter's derive.Owner,
 // active while any of its machines runs.
-type lifetime struct{ owner *derive.Owner }
+type lifetime struct {
+	owner *derive.Owner
+	ctl   *control // interrupt state (interrupt.go)
+}
 
 // Owner returns the derive.Owner that records m's interpreter's entries in
 // the global type caches (nil for a Machine not made by NewMachine).
@@ -1066,7 +1069,25 @@ func (m *Machine) Run() (err error) {
 	// source context. Declared before the state-restore defer below so the
 	// state-restore runs first and m.mem/m.ip/m.fp hold panic-time values
 	// when capturePanic reads them.
+	// A run the interrupt reached ends with ErrInterrupted even when its code
+	// returned or panicked: a callback the interrupt cut short returned zero
+	// results, so what the code did after it is not to be trusted. Deferred
+	// first so it runs after recoverPanic.
+	defer func() {
+		if m.Interrupted() {
+			err = ErrInterrupted
+		}
+	}()
 	defer m.recoverPanic(&err)
+	if m.Interrupted() {
+		return ErrInterrupted
+	}
+	// The root machine counts as a running goroutine for its outermost Run
+	// (runners and goroutine machines are counted where they start).
+	if c := m.control(); c != nil && !m.running && m.trampBase == 0 {
+		c.enter()
+		defer c.exit()
+	}
 	prev := SetActiveMachine(m)
 	defer SetActiveMachine(prev)
 
@@ -1076,6 +1097,11 @@ func (m *Machine) Run() (err error) {
 	runIterBase := len(m.iterStack)
 	m.iterBase = runIterBase
 	defer func() {
+		if m.Interrupted() {
+			// The loops an interrupt left never call their iterators' stop;
+			// call it so their coroutines do not stay parked.
+			m.stopIters(runIterBase)
+		}
 		m.iterStack = m.iterStack[:runIterBase]
 		m.iterBase = savedIterBase
 	}()
@@ -1222,6 +1248,8 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 	// Extend mem to full capacity so all writes up to cap are in bounds.
 	mem = mem[:cap(mem)]
 	var safepointCtr uint // throttles the interrupt poll on the call opcodes
+	// Interrupt flag, hoisted so each poll is one load and a branch.
+	intr := m.interruptFlag()
 
 	defer func() {
 		m.mem, m.ip, m.fp = mem[:sp+1], ip, fp
@@ -1311,6 +1339,9 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			// State-dump safepoint: covers recursion that never hits a back-edge.
 			if dumpRequested.Load() {
 				m.handleDumpReq(ip, fp, mem)
+			}
+			if intr.Load() {
+				return true, ErrInterrupted
 			}
 			// Interrupt poll, gated so mvm run (no hook) pays only a predicted
 			// branch; off the loop back-edge so pure compute loops are unaffected.
@@ -1525,6 +1556,9 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			if safepointHook != nil {
 				m.callSafepoint(ip, fp, mem, &safepointCtr)
 			}
+			if intr.Load() {
+				return true, ErrInterrupted
+			}
 			narg := int(c.B) >> 16
 			nret := int(c.B) & 0xFFFF
 			fpVal := uint64(fp)
@@ -1569,6 +1603,9 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			// Struct or Array, so detachByValueArgs would be a no-op.
 			if safepointHook != nil {
 				m.callSafepoint(ip, fp, mem, &safepointCtr)
+			}
+			if intr.Load() {
+				return true, ErrInterrupted
 			}
 			narg := int(c.B) >> 16
 			nret := int(c.B) & 0xFFFF
@@ -1787,22 +1824,34 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 		case LowerIntImmJumpFalse:
 			sp--
 			if int(mem[sp+1].num) >= int(c.B) {
+				if c.A <= 0 && intr.Load() {
+					return true, ErrInterrupted
+				}
 				ip += int(c.A)
 				continue
 			}
 		case LowerIntImmJumpTrue:
 			sp--
 			if int(mem[sp+1].num) < int(c.B) {
+				if c.A <= 0 && intr.Load() {
+					return true, ErrInterrupted
+				}
 				ip += int(c.A)
 				continue
 			}
 		case GetLocalLowerIntImmJumpFalse:
 			if int(mem[int(int16(c.A))+fp-1].num) >= int(c.B) {
+				if c.A <= 0xFFFF && intr.Load() { // offset (high 16 bits) <= 0
+					return true, ErrInterrupted
+				}
 				ip += int(c.A >> 16)
 				continue
 			}
 		case GetLocalLowerIntImmJumpTrue:
 			if int(mem[int(int16(c.A))+fp-1].num) < int(c.B) {
+				if c.A <= 0xFFFF && intr.Load() { // offset (high 16 bits) <= 0
+					return true, ErrInterrupted
+				}
 				ip += int(c.A >> 16)
 				continue
 			}
@@ -1992,9 +2041,11 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 					namedType := m.globals[int(recvHint)-1].ref.Type()
 					rv = runtype.ValueMethodByName(recvRV.Convert(namedType), methodName)
 				}
-				if rv.IsValid() && recvRV.IsValid() &&
-					hasNativeMethodHook(recvRV.Type(), methodName) {
-					mem[sp] = Value{ref: reflect.ValueOf(boundHookCall{Fn: rv, RecvType: recvRV.Type(), Method: methodName, Recv: recvRV})}
+				// A hook keys on the concrete receiver, also when it is called
+				// through a native interface (a sync.Locker holding a *sync.Mutex)
+				// or promoted from an embedded field.
+				if hrv, ok := hookTarget(recvRV, methodName); ok && rv.IsValid() {
+					mem[sp] = Value{ref: reflect.ValueOf(boundHookCall{Fn: rv, RecvType: hrv.Type(), Method: methodName, Recv: hrv})}
 					break
 				}
 				mem[sp] = Value{ref: rv}
@@ -2019,7 +2070,7 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 					mem[sp] = Value{ref: mv}
 					break
 				}
-				mem[sp] = Value{ref: nativeMethodLookup(m, rv, m.MethodNames[methodID])}
+				mem[sp] = m.hookedNativeMethod(rv, m.MethodNames[methodID])
 				break
 			}
 			method := methodTyp.Methods[methodID]
@@ -2073,7 +2124,7 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 						mem[sp] = Value{ref: mv}
 						outcome = outNative
 					} else {
-						mem[sp] = Value{ref: nativeMethodLookup(m, rv, m.MethodNames[methodID])}
+						mem[sp] = m.hookedNativeMethod(rv, m.MethodNames[methodID])
 						outcome = outNative
 					}
 					break
@@ -2399,12 +2450,15 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			m.setFuncField(forceSettable(mem[sp-1].ref), mem[sp])
 			sp -= 2
 		case Jump:
-			// State-dump safepoint at loop back-edges (backward jumps), avoiding a
-			// per-instruction poll. No interrupt poll here: it would tax the hottest
-			// path of a pure compute loop. The poll lives on the call opcodes, which
-			// any non-trivial loop body reaches.
-			if c.A < 0 && dumpRequested.Load() {
-				m.handleDumpReq(ip, fp, mem)
+			// Safepoint at loop back-edges (backward jumps, and the self jump of
+			// an empty `for {}`), avoiding a per-instruction poll.
+			if c.A <= 0 {
+				if dumpRequested.Load() {
+					m.handleDumpReq(ip, fp, mem)
+				}
+				if intr.Load() {
+					return true, ErrInterrupted
+				}
 			}
 			ip += int(c.A)
 			continue
@@ -2412,6 +2466,9 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			cond := mem[sp].num != 0
 			sp--
 			if cond {
+				if c.A <= 0 && intr.Load() {
+					return true, ErrInterrupted
+				}
 				ip += int(c.A)
 				continue
 			}
@@ -2419,12 +2476,18 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			cond := mem[sp].num != 0
 			sp--
 			if !cond {
+				if c.A <= 0 && intr.Load() {
+					return true, ErrInterrupted
+				}
 				ip += int(c.A)
 				continue
 			}
 		case JumpSetTrue:
 			cond := mem[sp].num != 0
 			if cond {
+				if c.A <= 0 && intr.Load() {
+					return true, ErrInterrupted
+				}
 				ip += int(c.A)
 				// Note that the stack is not modified if cond is true.
 				continue
@@ -2433,6 +2496,9 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 		case JumpSetFalse:
 			cond := mem[sp].num != 0
 			if !cond {
+				if c.A <= 0 && intr.Load() {
+					return true, ErrInterrupted
+				}
 				ip += int(c.A)
 				// Note that the stack is not modified if cond is false.
 				continue
@@ -2655,10 +2721,15 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 					break
 				}
 			}
-			abortIdx := -1
+			abortIdx, stopIdx := -1, -1
 			n := ncase
 			if !hasDefault && m.watchFault() {
-				abortIdx = ncase
+				abortIdx = n
+				n++
+			}
+			stop := m.stopChan()
+			if !hasDefault && stop != nil {
+				stopIdx = n
 				n++
 			}
 			cases := make([]reflect.SelectCase, n)
@@ -2679,9 +2750,15 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 			if abortIdx >= 0 {
 				cases[abortIdx] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.fault.abort)}
 			}
+			if stopIdx >= 0 {
+				cases[stopIdx] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(stop)}
+			}
 			chosen, recv, recvOK := reflect.Select(cases)
 			if chosen == abortIdx {
 				panic(ErrGoroutineFault)
+			}
+			if chosen == stopIdx {
+				panic(ErrInterrupted)
 			}
 			sp = base
 			ci := meta.Cases[chosen]
@@ -3898,6 +3975,9 @@ func (m *Machine) deferPush(c *Instruction, ip int, mem []Value, fp, sp int) ([]
 		funcVal := mem[sp]
 		copy(mem[sp-narg+1:sp+1], mem[sp-narg:sp])
 		mem[sp-narg] = funcVal
+	} else if hv, ok := m.hookFunc(mem[sp-narg]); ok {
+		mem[sp-narg] = hv // a hooked native method: defer the hook
+		isX = 1
 	} else if isX == 0 && isNativeFunc(mem[sp-narg].ref) {
 		// Compile-time couldn't tell a variable holding a native Go func from
 		// one holding a VM func; detect native at runtime so Return dispatches
@@ -4167,6 +4247,17 @@ func embeddedIfaceStub(rt reflect.Type, name string) bool {
 		}
 	}
 	return false
+}
+
+// hookedNativeMethod returns rv's native method name for the Call opcode:
+// a boundHookCall when a NativeMethodHook is registered for rv's concrete
+// type, so a call through an mvm interface reaches the hook too.
+func (m *Machine) hookedNativeMethod(rv reflect.Value, name string) Value {
+	mv := nativeMethodLookup(m, rv, name)
+	if hrv, ok := hookTarget(rv, name); ok && mv.IsValid() {
+		return Value{ref: reflect.ValueOf(boundHookCall{Fn: mv, RecvType: hrv.Type(), Method: name, Recv: hrv})}
+	}
+	return Value{ref: mv}
 }
 
 func hasNativeMethod(rt reflect.Type, name string) bool {
@@ -4999,8 +5090,9 @@ func (m *Machine) invokeNative(hook NativeMethodHook, hookRecv, rv reflect.Value
 		if _, ok := r.(CleanExit); ok {
 			panic(r)
 		}
-		// A goroutine-fault abort is not a recoverable; re-panic so it reaches Run's recoverPanic.
-		if e, ok := r.(error); ok && errors.Is(e, ErrGoroutineFault) {
+		// A goroutine-fault abort or an interrupt is not recoverable; re-panic so
+		// it reaches Run's recoverPanic.
+		if e, ok := r.(error); ok && (errors.Is(e, ErrGoroutineFault) || errors.Is(e, ErrInterrupted)) {
 			panic(r)
 		}
 		// Genuine native panic; make it catchable by interpreted recover().
@@ -5096,10 +5188,15 @@ func (m *Machine) buildCallFunc(fval Value, fnType reflect.Type) reflect.Value {
 	}
 	ref := &funcRef{val: fval}
 	w := reflect.MakeFunc(fnType, func(args []reflect.Value) []reflect.Value {
+		cb := rs.ctl().enterCallback()
+		defer cb.exit()
 		runner := rs.acquireRunner()
 		defer rs.releaseRunner(runner)
 		defer runtime.KeepAlive(ref)
 		out, err := runner.callPooled(fval, fnType, args)
+		if out, ok := cb.interrupted(err, fnType); ok {
+			return out
+		}
 		if err != nil {
 			var pe *PanicError
 			if errors.As(err, &pe) {
@@ -5141,9 +5238,14 @@ func (m *Machine) buildMethodExprFunc(codeAddr int, exprType reflect.Type) refle
 		cell := new(Value)
 		*cell = FromReflect(args[0])
 		clo := Value{ref: reflect.ValueOf(Closure{Code: codeAddr, Heap: []*Value{cell}})}
+		cb := rs.ctl().enterCallback()
+		defer cb.exit()
 		runner := rs.acquireRunner()
 		defer rs.releaseRunner(runner)
 		out, err := runner.callPooled(clo, innerType, args[1:])
+		if out, ok := cb.interrupted(err, exprType); ok {
+			return out
+		}
 		if err != nil {
 			panic(err)
 		}
@@ -5243,6 +5345,9 @@ func (m *Machine) callPooled(fval Value, funcType reflect.Type, args []reflect.V
 }
 
 func (m *Machine) reentrantRunErr(runErr error) error {
+	if errors.Is(runErr, ErrInterrupted) {
+		return runErr // even mid-panic: the interrupt ends the unwinding
+	}
 	if m.panicking {
 		if m.panicInfo != nil {
 			return m.panicInfo
@@ -5292,6 +5397,9 @@ func (m *Machine) collectReturns(funcType reflect.Type, nret int) []reflect.Valu
 }
 
 func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked bool) {
+	if hv, ok := m.hookFunc(fval); ok {
+		fval = hv // a hooked native method: run the hook
+	}
 	// Inline fast path: resolve addressable struct func fields (mirrors Call opcode).
 	if fval.ref.Kind() == reflect.Func && fval.ref.CanAddr() {
 		fval = m.resolveFuncField(fval)
@@ -5309,12 +5417,31 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 		}
 		coerceInterfaceArgs(in, rv.Type())
 		m.wrapFuncArgs(in, args, rv.Type())
+		call := rv.Call
 		if spread {
 			in[len(in)-1] = m.unwrapVariadicIface(in[len(in)-1])
-			go func() { rv.CallSlice(in) }()
-		} else {
-			go func() { rv.Call(in) }()
+			call = rv.CallSlice
 		}
+		ctl := m.control()
+		if ctl == nil {
+			go func() { call(in) }()
+			return false
+		}
+		ctl.enter()
+		go func() {
+			defer ctl.exit()
+			g := gid()
+			mvmBases.Store(g, struct{}{})
+			defer mvmBases.Delete(g)
+			defer func() {
+				// An interrupt raised by a callback ends the goroutine; any
+				// other panic keeps going, as in Go.
+				if r := recover(); r != nil && !isInterrupt(r) {
+					panic(r)
+				}
+			}()
+			call(in)
+		}()
 		return false
 	}
 
@@ -5387,10 +5514,18 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 		PanicNilCompat:  m.PanicNilCompat,
 		sentinels:       m.sentinels,
 	}
+	ctl := m.control()
+	if ctl != nil {
+		ctl.enter()
+	}
 	go func() {
+		if ctl != nil {
+			defer ctl.exit()
+		}
 		// An unrecovered panic in an interpreted goroutine returns from Run as an error.
-		// Go would crash the process; record it so main surfaces it.
-		if err := child.Run(); err != nil && m.fault != nil {
+		// Go would crash the process; record it so main surfaces it. An
+		// interrupt is not a panic.
+		if err := child.Run(); err != nil && m.fault != nil && !errors.Is(err, ErrInterrupted) {
 			m.fault.record(err)
 		}
 	}()

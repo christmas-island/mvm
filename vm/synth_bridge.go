@@ -577,9 +577,20 @@ func callMethod(
 	// native callers run on several interpreted goroutines,
 	// and CallFunc's save/restore of m's frame state is single-threaded.
 	rs := m.captureRunnerState()
+	cb := rs.ctl().enterCallback()
+	defer cb.exit()
 	runner := rs.acquireRunner()
 	defer rs.releaseRunner(runner)
-	return runner.callPooled(fval, methodSig, args)
+	out, err := runner.callPooled(fval, methodSig, args)
+	if out, ok := cb.interrupted(err, methodSig); ok {
+		return out, nil
+	}
+	if errors.Is(err, ErrInterrupted) {
+		// Raise it here rather than in each shape handler, some of which
+		// turn an error into zero results.
+		panic(err)
+	}
+	return out, err
 }
 
 func (m *Machine) callPromotedConcrete(

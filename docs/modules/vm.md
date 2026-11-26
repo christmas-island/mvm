@@ -352,6 +352,41 @@ when the target is a named non-closure function, the compiler removes the
 preceding `GetGlobal` and encodes the globals index directly in the
 instruction, avoiding one stack read.
 
+### Interrupts (`interrupt.go`, `interrupt_sync.go`)
+
+`Machine.Interrupt` (promoted to `interp.Interp`) stops every goroutine of an
+interpreter. The state is a `control` reached through the `lifetime` every
+machine of the interpreter shares (root, pooled runners, goroutine machines):
+an atomic flag and a channel closed on interrupt.
+
+- **Polls.** `runLoop` hoists the flag into a local and loads it at every
+  call opcode (`Call`, `CallImm`, `CallImmFast`) and at every backward or
+  self jump, conditional or not (`Jump` with `A <= 0` covers `for {}`). A
+  set flag returns `(true, ErrInterrupted)` from the loop: no deferred call
+  runs and `recover` never sees it, so a program cannot keep itself alive.
+  `Run` also returns `ErrInterrupted` at entry, and in place of whatever its
+  code returned once the flag is set.
+- **Blocked goroutines.** A channel send or receive that would block, a
+  select without default, the interpreter's `time.Sleep` (bound by
+  `interp`), and `sync.Mutex.Lock`, `sync.RWMutex.Lock/RLock` and
+  `sync.WaitGroup.Wait` called from interpreted code (native method hooks
+  that retry the non-blocking form on every interpreted unlock, `Done` or
+  `Add` and at least every millisecond) wait on the channel too and panic
+  with `ErrInterrupted`, which `invokeNative` re-raises and `Run` returns.
+- **Callbacks.** A callback entry (`buildCallFunc`, `buildMethodExprFunc`,
+  `callMethod`) on a goroutine with an mvm frame beneath re-raises the
+  interrupt as a panic through the native caller; on any other goroutine
+  (a timer's) it returns zero results, since nothing there would catch a
+  panic. After an interrupt no callback runs interpreted code.
+- **Accounting.** `Running` counts the goroutines executing for the
+  interpreter: the root's outermost `Run`, interpreted goroutines, native
+  goroutines started by a go statement, and foreign goroutines inside a
+  callback. `WaitStopped(ctx)` waits for zero and otherwise returns a
+  `*StillRunningError`: what remains is parked in native code (a blocking
+  read, an accept loop, `sync.Cond.Wait`), which no interrupt can reach; it
+  stops at its next poll once that call returns. A releasing close
+  (`Interp.CloseAndRelease`) is only safe at zero.
+
 ### Panics, defer, recover, and diagnostics
 
 - `DeferPush` saves a sentinel frame pointing to a deferred function.
