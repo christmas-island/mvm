@@ -43,6 +43,7 @@ func SynthIfaceRtype(t *mtype.Type) reflect.Type {
 	}
 	if key != "" {
 		if st := named[key]; st != nil {
+			own(t)
 			synthIfaceCache[t] = st
 			derivedMu.Unlock()
 			return st
@@ -79,6 +80,7 @@ func SynthIfaceRtype(t *mtype.Type) reflect.Type {
 // cacheSynthIface records rt as t's synth interface rtype and under its
 // cross-clone dedupe key. Caller holds derivedMu.
 func cacheSynthIface(named map[string]reflect.Type, t *mtype.Type, key string, rt reflect.Type) {
+	own(t)
 	synthIfaceCache[t] = rt
 	if key != "" {
 		named[key] = rt

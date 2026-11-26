@@ -15,11 +15,10 @@ type MethodSpec struct {
 	StubPC   uintptr
 }
 
-// synthStruct is the multi-method container for a synth struct.
+// synthStruct is the container head for a synth struct.
 // Typed-struct allocation (vs []byte) gives GC the correct pointer map for
 // Equal, GCData, and the Fields slice.
 type synthStruct struct {
 	st abiStructType
 	u  abiUncommon
-	m  [maxMethods]abiMethod
 }

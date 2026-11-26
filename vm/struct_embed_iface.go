@@ -53,7 +53,7 @@ func (m *Machine) bridgeStructEmbedIface(rv reflect.Value, target reflect.Type) 
 }
 
 func (m *Machine) buildStructEmbedSynth(layout, target reflect.Type, fieldIdx int) reflect.Type {
-	res, err := runtype.ReserveMethods(layout, layout.String(), "")
+	res, err := runtype.ReserveMethodsCap(layout, layout.String(), "", target.NumMethod())
 	if err != nil {
 		return nil
 	}

@@ -67,13 +67,13 @@ func installMethods(dst []abiMethod, methods []MethodSpec) {
 	}
 }
 
-func checkMethodCount(methods []MethodSpec) error {
+func checkMethodCount(methods []MethodSpec, capacity int) error {
 	switch {
 	case len(methods) == 0:
 		return errNoMethods
-	case len(methods) > maxMethods:
-		return fmt.Errorf("runtype: too many methods (%d > %d)",
-			len(methods), maxMethods)
+	case len(methods) > capacity:
+		return fmt.Errorf("runtype: too many methods (%d > %d reserved)",
+			len(methods), capacity)
 	}
 	return nil
 }
@@ -112,43 +112,40 @@ var (
 const maxFuncIO = 32
 
 // maxMethods caps the methods installable per synth attach call.
-// Runtime cost: maxMethods*16 bytes per synth rtype.
+// A reservation's method table holds the count it was reserved for
+// (ReserveMethodsCap), 16 bytes each, at most maxMethods.
 const maxMethods = 256
 
 // MaxMethods is the per-synth-rtype method-table capacity.
 const MaxMethods = maxMethods
 
-// Per-kind multi-method containers.
-// Layout = kind-specific type prefix + uncommon + [maxMethods]method.
+// Per-kind container heads: the kind-specific type prefix and the uncommon
+// struct (and, for func, the in/out array). The [n]method table follows the
+// head in the same allocation (see newContainer), so uncommon.Moff reaches it.
 
 type synthPrim struct {
 	t abiType
 	u abiUncommon
-	m [maxMethods]abiMethod
 }
 
 type synthSlice struct {
 	t abiSliceType
 	u abiUncommon
-	m [maxMethods]abiMethod
 }
 
 type synthChan struct {
 	t abiChanType
 	u abiUncommon
-	m [maxMethods]abiMethod
 }
 
 type synthArray struct {
 	t abiArrayType
 	u abiUncommon
-	m [maxMethods]abiMethod
 }
 
 type synthMap struct {
 	t abiMapType
 	u abiUncommon
-	m [maxMethods]abiMethod
 }
 
 // synthFunc places the In/Out pointer array (io) between the uncommon struct
@@ -157,5 +154,4 @@ type synthFunc struct {
 	t  abiFuncType
 	u  abiUncommon
 	io [maxFuncIO]*abiType
-	m  [maxMethods]abiMethod
 }

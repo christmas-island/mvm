@@ -14,24 +14,32 @@ import (
 type Reservation struct {
 	rt reflect.Type
 	u  *abiUncommon
-	m  []abiMethod // the container's [maxMethods] method array, full length
+	m  []abiMethod // the container's method table, full length (the capacity)
 }
 
 // Type returns the reserved rtype. It is a valid named type with zero methods
 // until Fill runs.
 func (r *Reservation) Type() reflect.Type { return r.rt }
 
+// Cap returns how many methods Fill can install.
+func (r *Reservation) Cap() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.m)
+}
+
 var errNilReservation = errors.New("runtype: Fill on nil Reservation")
 
 // Fill installs methods into the reserved method table in place, publishing the
 // counts last so a reader seeing them also sees written slots; the caller must
 // establish happens-before to other goroutines (attach runs before the VM resumes).
-// len(methods) must be in [1, maxMethods].
+// len(methods) must be in [1, r.Cap()].
 func (r *Reservation) Fill(methods []MethodSpec) error {
 	if r == nil || r.u == nil {
 		return errNilReservation
 	}
-	if err := checkMethodCount(methods); err != nil {
+	if err := checkMethodCount(methods, len(r.m)); err != nil {
 		return err
 	}
 	installMethods(r.m[:len(methods)], methods)
@@ -68,92 +76,98 @@ func EmbedTripsStructOf(t reflect.Type) bool {
 }
 
 // ReserveMethods reserves a method-bearing identity for layout (dispatching by
-// kind) without yet installing any method. Fill the returned Reservation once the
-// method stubs are known.
+// kind) without yet installing any method, with room for maxMethods. Fill the
+// returned Reservation once the method stubs are known.
 func ReserveMethods(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+	return ReserveMethodsCap(layout, name, pkgPath, maxMethods)
+}
+
+// ReserveMethodsCap is ReserveMethods with room for n methods (clamped to
+// [0, maxMethods]): the rtype is allocated with an n-entry table, and Fill
+// refuses more. The table cannot grow later without changing the rtype's
+// identity, so n must bound every method set Fill will install.
+func ReserveMethodsCap(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
+	n = clampCap(n)
 	switch k := layout.Kind(); {
 	case k == reflect.Struct:
-		return reserveStruct(layout, name, pkgPath)
+		return reserveStruct(layout, name, pkgPath, n)
 	case isPrimitiveKind(k):
-		return reservePrimitive(layout, name, pkgPath)
+		return reservePrimitive(layout, name, pkgPath, n)
 	case k == reflect.Slice:
-		return reserveSlice(layout, name, pkgPath)
+		return reserveSlice(layout, name, pkgPath, n)
 	case k == reflect.Array:
-		return reserveArray(layout, name, pkgPath)
+		return reserveArray(layout, name, pkgPath, n)
 	case k == reflect.Map:
-		return reserveMap(layout, name, pkgPath)
+		return reserveMap(layout, name, pkgPath, n)
 	case k == reflect.Func:
-		return reserveFunc(layout, name, pkgPath)
+		return reserveFunc(layout, name, pkgPath, n)
 	case k == reflect.Pointer:
-		return reservePtr(layout, name, pkgPath)
+		return reservePtr(layout, name, pkgPath, n)
 	case k == reflect.Chan:
-		return reserveChan(layout, name, pkgPath)
+		return reserveChan(layout, name, pkgPath, n)
 	}
 	return nil, ErrKindUnsupported
 }
 
-func reserveStruct(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func clampCap(n int) int { return min(max(n, 0), maxMethods) }
+
+func reserveStruct(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := (*abiStructType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthStruct)
+	b, m, moff := newContainer[synthStruct](n, unsafe.Offsetof(synthStruct{}.u))
 	b.st = *src
 	stampHeader(&b.st.abiType, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.st.abiType, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.st.abiType), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.st.abiType), u: &b.u, m: m}, nil
 }
 
-func reservePrimitive(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reservePrimitive(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := rtypePtr(layout)
-	b := new(synthPrim)
+	b, m, moff := newContainer[synthPrim](n, unsafe.Offsetof(synthPrim{}.u))
 	b.t = *src
 	stampHeader(&b.t, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t, src)
-	return &Reservation{rt: asReflectType(&b.t), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t), u: &b.u, m: m}, nil
 }
 
-func reserveSlice(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reserveSlice(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := (*abiSliceType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthSlice)
+	b, m, moff := newContainer[synthSlice](n, unsafe.Offsetof(synthSlice{}.u))
 	b.t = *src
 	stampHeader(&b.t.abiType, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t.abiType, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: m}, nil
 }
 
-func reserveArray(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reserveArray(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := (*abiArrayType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthArray)
+	b, m, moff := newContainer[synthArray](n, unsafe.Offsetof(synthArray{}.u))
 	b.t = *src
 	stampHeader(&b.t.abiType, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t.abiType, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: m}, nil
 }
 
-func reserveMap(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reserveMap(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := (*abiMapType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthMap)
+	b, m, moff := newContainer[synthMap](n, unsafe.Offsetof(synthMap{}.u))
 	b.t = *src
 	stampHeader(&b.t.abiType, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t.abiType, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: m}, nil
 }
 
-func reserveFunc(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reserveFunc(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	nin, nout := layout.NumIn(), layout.NumOut()
 	if nin+nout > maxFuncIO {
 		return nil, errFuncTooManyIO
 	}
 	src := (*abiFuncType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthFunc)
+	b, m, moff := newContainer[synthFunc](n, unsafe.Offsetof(synthFunc{}.u))
 	b.t = *src
 	stampHeader(&b.t.abiType, name)
 	for i := range nin {
@@ -162,35 +176,32 @@ func reserveFunc(layout reflect.Type, name, pkgPath string) (*Reservation, error
 	for i := range nout {
 		b.io[nin+i] = (*abiType)(unsafe.Pointer(rtypePtr(layout.Out(i))))
 	}
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t.abiType, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: m}, nil
 }
 
 // reservePtr clones a *T layout under a new name.
 // Unlike ReservePtrMethods it leaves the donor elem untouched; SetElem patches it later.
-func reservePtr(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reservePtr(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := (*abiPtrType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthPtr)
+	b, m, moff := newContainer[synthPtr](n, unsafe.Offsetof(synthPtr{}.u))
 	b.t = src.abiType
 	b.elem = src.Elem
 	stampHeader(&b.t, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.t), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t), u: &b.u, m: m}, nil
 }
 
-func reserveChan(layout reflect.Type, name, pkgPath string) (*Reservation, error) {
+func reserveChan(layout reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	src := (*abiChanType)(unsafe.Pointer(rtypePtr(layout)))
-	b := new(synthChan)
+	b, m, moff := newContainer[synthChan](n, unsafe.Offsetof(synthChan{}.u))
 	b.t = *src
 	stampHeader(&b.t.abiType, name)
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	registerLayout(&b.t.abiType, &src.abiType)
-	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t.abiType), u: &b.u, m: m}, nil
 }
 
 // SetElem repoints a composite rtype's Elem in place (self-referential type P *P).
@@ -212,13 +223,19 @@ func SetElem(t, elem reflect.Type) {
 
 // ReservePtrMethods reserves a *T identity carrying eventual ptr-receiver
 // methods and wires elem.PtrToThis so reflect.PointerTo(elem) returns it, all
-// before Fill.
+// before Fill, with room for maxMethods.
 func ReservePtrMethods(elem reflect.Type, name, pkgPath string) (*Reservation, error) {
+	return ReservePtrMethodsCap(elem, name, pkgPath, maxMethods)
+}
+
+// ReservePtrMethodsCap is ReservePtrMethods with room for n methods (see
+// ReserveMethodsCap).
+func ReservePtrMethodsCap(elem reflect.Type, name, pkgPath string, n int) (*Reservation, error) {
 	elemRT := rtypePtr(elem)
 	if elemRT == nil {
 		return nil, errNilElemType
 	}
-	b := new(synthPtr)
+	b, m, moff := newContainer[synthPtr](clampCap(n), unsafe.Offsetof(synthPtr{}.u))
 	b.elem = elemRT
 	intPtrRT := rtypePtr(reflect.TypeFor[*int]())
 	// No tflagNamed: a derived *T is unnamed in Go, methods or not; only a
@@ -237,11 +254,10 @@ func ReservePtrMethods(elem reflect.Type, name, pkgPath string) (*Reservation, e
 		Str:        addReflectOff(unsafe.Pointer(encodeName(name, true).Bytes)),
 		PtrToThis:  0,
 	}
-	moff := unsafe.Offsetof(b.m) - unsafe.Offsetof(b.u)
-	b.u = makeUncommon(pkgPath, uint32(moff))
+	b.u = makeUncommon(pkgPath, moff)
 	elemRT.PtrToThis = addReflectOff(unsafe.Pointer(&b.t))
 	registerLayout(&b.t, intPtrRT)
-	return &Reservation{rt: asReflectType(&b.t), u: &b.u, m: b.m[:]}, nil
+	return &Reservation{rt: asReflectType(&b.t), u: &b.u, m: m}, nil
 }
 
 // CloneStructLayoutWithFields returns a fresh, unnamed struct rtype with the same

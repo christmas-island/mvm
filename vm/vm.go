@@ -441,6 +441,11 @@ type Machine struct {
 	synthReleasesMu sync.Mutex
 	synthReleases   []synthRelease // give back this Machine's stub-pool slots.
 
+	// life is shared with every runner and goroutine machine cloned from this
+	// one, so it is reachable while any machine of the interpreter can run
+	// (see AfterCollected).
+	life *lifetime
+
 	fault         *goroutineFault // shared goroutine-panic sink, lazily created on first `go`
 	faultContinue bool            // policy seed copied into fault when it is created
 	isRoot        bool            // the top-level machine; only it aborts channel waits on a fault
@@ -498,7 +503,63 @@ const (
 
 // NewMachine returns a pointer on a new Machine.
 func NewMachine() *Machine {
-	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}}
+	return &Machine{in: os.Stdin, out: os.Stdout, err: os.Stderr, synthIfaces: map[string]reflect.Type{}, life: &lifetime{owner: derive.NewOwner()}}
+}
+
+// lifetime is a token whose collection means no machine of an interpreter
+// is left: neither the root, a runner a native callback may still borrow,
+// nor an interpreted goroutine. It carries the interpreter's derive.Owner,
+// active while any of its machines runs.
+type lifetime struct{ owner *derive.Owner }
+
+// Owner returns the derive.Owner that records m's interpreter's entries in
+// the global type caches (nil for a Machine not made by NewMachine).
+func (m *Machine) Owner() *derive.Owner {
+	if m.life == nil {
+		return nil
+	}
+	return m.life.owner
+}
+
+// compileOwners maps a goroutine compiling for an interpreter to its Owner.
+var compileOwners sync.Map // uintptr (g pointer) -> *derive.Owner
+
+// EnterCompile makes m's Owner active on the calling goroutine until the
+// returned func runs, so the type caches filled while compiling are recorded
+// for m's interpreter.
+func (m *Machine) EnterCompile() (exit func()) {
+	o := m.Owner()
+	if o == nil {
+		return func() {}
+	}
+	g := gid()
+	prev, had := compileOwners.Swap(g, o)
+	return func() {
+		if had {
+			compileOwners.Store(g, prev)
+		} else {
+			compileOwners.Delete(g)
+		}
+	}
+}
+
+func activeOwner() *derive.Owner {
+	if o, ok := compileOwners.Load(gid()); ok {
+		return o.(*derive.Owner)
+	}
+	if m := ActiveMachine(); m != nil {
+		return m.Owner()
+	}
+	return nil
+}
+
+// AfterCollected arranges for f(arg) to run, on the runtime's cleanup
+// goroutine, once m and every runner and goroutine machine derived from it
+// are unreachable. arg must not reference m.
+func (m *Machine) AfterCollected(f func(any), arg any) {
+	if m.life != nil {
+		runtime.AddCleanup(m.life, f, arg)
+	}
 }
 
 // SetIO sets the I/O streams for the machine.
@@ -4758,6 +4819,7 @@ type runnerState struct {
 	funcWrappers    *funcWrapTable   // parent-owned; pointer-shared with runner
 	typesByRtype    *typesIndex      // parent-owned; pointer-shared with runner
 	synthIfaces     map[string]reflect.Type
+	life            *lifetime
 	debugInfoFn     func() *DebugInfo
 	pool            *sync.Pool      // shared pool on the parent Machine
 	fault           *goroutineFault // shared goroutine-panic sink
@@ -4832,6 +4894,7 @@ func (m *Machine) captureRunnerState() *runnerState {
 		funcWrappers:    m.funcWrappers,
 		typesByRtype:    m.typesByRtype,
 		synthIfaces:     m.synthIfaces,
+		life:            m.life,
 		debugInfoFn:     m.debugInfoFn,
 		pool:            &m.runnerPool,
 		fault:           m.fault,
@@ -4861,6 +4924,7 @@ func (rs *runnerState) acquireRunner() *Machine {
 	m.funcWrappers = rs.funcWrappers
 	m.typesByRtype = rs.typesByRtype
 	m.synthIfaces = rs.synthIfaces
+	m.life = rs.life
 	m.debugInfoFn = rs.debugInfoFn
 	m.fault = rs.fault
 	m.faultContinue = rs.faultContinue
@@ -5317,6 +5381,7 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 		funcWrappers:    m.funcWrappers,
 		typesByRtype:    m.typesByRtype,
 		synthIfaces:     m.synthIfaces,
+		life:            m.life,
 		fault:           m.fault,
 		debugInfoFn:     m.debugInfoFn,
 		PanicNilCompat:  m.PanicNilCompat,
