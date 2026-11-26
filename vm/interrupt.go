@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 )
 
 // Interrupting a running interpreter.
@@ -70,9 +72,31 @@ type control struct {
 	wakeMu  sync.Mutex
 	wake    chan struct{}
 	waiters atomic.Int32
+
+	// ctx is the interpreter's context, cancelled by interrupt.
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// onStop holds what interrupt closes: the resources the interpreter's
+	// bound standard library opened (see OnInterrupt, CloseOnInterrupt).
+	stopMu   sync.Mutex
+	stopped  bool
+	onStop   map[uint64]stopEntry
+	nextStop uint64
+	pruneAt  int
 }
 
-func newControl() *control { return &control{stop: make(chan struct{})} }
+// stopEntry is one registration: run closes the resource; alive reports
+// whether it may still need closing (false once a weakly held one is gone).
+type stopEntry struct {
+	run   func()
+	alive func() bool
+}
+
+func newControl() *control {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &control{stop: make(chan struct{}), ctx: ctx, cancel: cancel}
+}
 
 // noInterrupt is the flag of a Machine made without NewMachine; it is never set.
 var noInterrupt atomic.Bool
@@ -103,7 +127,112 @@ func (m *Machine) stopChan() chan struct{} {
 
 func (c *control) interrupt() {
 	c.flag.Store(true)
-	c.stopOnce.Do(func() { close(c.stop) })
+	c.stopOnce.Do(func() {
+		close(c.stop)
+		c.cancel()
+		c.stopMu.Lock()
+		c.stopped = true
+		entries := c.onStop
+		c.onStop = nil
+		c.stopMu.Unlock()
+		if len(entries) > 0 {
+			// Closing may block (an httptest.Server waits for its handlers),
+			// and Interrupt must not: close on a goroutine of its own.
+			go func() {
+				for _, e := range entries {
+					runStop(e.run)
+				}
+			}()
+		}
+	})
+}
+
+func runStop(f func()) {
+	defer func() { _ = recover() }()
+	f()
+}
+
+// addStop registers e and returns a function that removes it. After an
+// interrupt e runs at once.
+func (c *control) addStop(e stopEntry) (remove func()) {
+	c.stopMu.Lock()
+	if c.stopped {
+		c.stopMu.Unlock()
+		runStop(e.run)
+		return func() {}
+	}
+	if c.onStop == nil {
+		c.onStop = map[uint64]stopEntry{}
+	}
+	if len(c.onStop) >= max(c.pruneAt, 64) {
+		for id, x := range c.onStop {
+			if !x.alive() {
+				delete(c.onStop, id)
+			}
+		}
+		c.pruneAt = 2 * len(c.onStop)
+	}
+	c.nextStop++
+	id := c.nextStop
+	c.onStop[id] = e
+	c.stopMu.Unlock()
+	return func() {
+		c.stopMu.Lock()
+		delete(c.onStop, id)
+		c.stopMu.Unlock()
+	}
+}
+
+// Context returns the interpreter's context: it is cancelled by Interrupt
+// (and so when the context given to SetContext ends). Bindings of blocking
+// standard-library calls use it; a host can hand it to code it calls for
+// the interpreter.
+func (m *Machine) Context() context.Context {
+	if c := m.control(); c != nil {
+		return c.ctx
+	}
+	return context.Background()
+}
+
+// SetContext ties the interpreter to ctx: when ctx ends, the interpreter is
+// interrupted. It returns a function that unties them.
+func (m *Machine) SetContext(ctx context.Context) (stop func() bool) {
+	return context.AfterFunc(ctx, m.Interrupt)
+}
+
+// OnInterrupt registers f to run, once, when the interpreter is
+// interrupted (at once if it already was), on a goroutine of its own. It
+// returns a function that removes the registration. f is held strongly.
+func (m *Machine) OnInterrupt(f func()) (remove func()) {
+	c := m.control()
+	if c == nil {
+		return func() {}
+	}
+	var once sync.Once
+	return c.addStop(stopEntry{run: func() { once.Do(f) }, alive: func() bool { return true }})
+}
+
+// CloseOnInterrupt registers p to be closed when m's interpreter is
+// interrupted (at once if it already was). This is what wakes a goroutine
+// parked in p's native Read or Accept. p is held weakly: a resource the
+// program no longer references is not kept alive by the registration.
+func CloseOnInterrupt[T any, P interface {
+	*T
+	io.Closer
+}](m *Machine, p P) {
+	c := m.control()
+	if c == nil || p == nil {
+		return
+	}
+	w := weak.Make((*T)(p))
+	c.addStop(stopEntry{
+		run: func() {
+			if q := w.Value(); q != nil {
+				_ = P(q).Close()
+			}
+		},
+		alive: func() bool { return w.Value() != nil },
+	})
 }
 
 // enter counts one more goroutine executing for the interpreter: the host
