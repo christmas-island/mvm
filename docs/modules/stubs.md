@@ -123,6 +123,9 @@ Not covered (the contract, not the trap, makes these safe): a
 `reflect.Method.Func` taken before the close (it holds the raw PC), and a call
 racing with the close or the sweep. A sweep is a stop-the-world pause that
 grows with the heap (~200 ms at a few hundred MiB).
+Race builds never sweep: `WriteHeapDump` faults under the race detector on any
+itab whose type reflect or mvm built with a package path, so their retired
+slots stay unused.
 
 S1 carries 3072 slots (Stringer/Error are the most-attached shape) and S38 5120
 (protobuf markers); the rest default to 256.

@@ -48,6 +48,7 @@ func wantStale(t *testing.T, what string, f func() string) {
 // A retired slot serves another layout only after a sweep, and every stale
 // path into it then reaches the trap, never the new method.
 func TestRetiredSlotSweptForAnyLayout(t *testing.T) {
+	skipWithoutSweep(t)
 	t.Cleanup(discardSwept)
 	small := reflect.StructOf([]reflect.StructField{{Name: "A", Type: reflect.TypeFor[int]()}})
 	large := reflect.StructOf([]reflect.StructField{
@@ -112,6 +113,7 @@ func TestRetiredSlotSweptForAnyLayout(t *testing.T) {
 
 // Parking (Close) is unchanged: a parked slot never goes to the swept list.
 func TestSweepIgnoresParkedSlots(t *testing.T) {
+	skipWithoutSweep(t)
 	t.Cleanup(discardSwept)
 	layout := reflect.StructOf([]reflect.StructField{{Name: "P", Type: reflect.TypeFor[int8]()}})
 	res, err := runtype.ReserveMethods(layout, "Parked", "example.com/retire")
@@ -138,6 +140,7 @@ func TestSweepIgnoresParkedSlots(t *testing.T) {
 }
 
 func TestRuntimeItabsSelfCheck(t *testing.T) {
+	skipWithoutSweep(t)
 	tabs, err := runtimeItabs()
 	if err != nil {
 		t.Fatal(err)
@@ -154,5 +157,30 @@ func discardSwept() {
 		f.nfree.Add(-int32(len(f.swept)))
 		f.swept = nil
 		f.mu.Unlock()
+	}
+}
+
+func skipWithoutSweep(t *testing.T) {
+	t.Helper()
+	if err := SweepAvailable(); err != nil {
+		t.Skip(err)
+	}
+}
+
+// Without a sweep a retired slot is never handed out again.
+func TestRetiredSlotUnusedWithoutSweep(t *testing.T) {
+	if SweepAvailable() == nil {
+		t.Skip("sweep available; covered by TestRetiredSlotSweptForAnyLayout")
+	}
+	layout := reflect.StructOf([]reflect.StructField{{Name: "R", Type: reflect.TypeFor[uint16]()}})
+	pc1, _, retire1 := fillRetirableS1(t, layout, "a")
+	retire1()
+	if _, err := Sweep(); err == nil {
+		t.Fatal("Sweep succeeded without a sweep")
+	}
+	pc2, _, retire2 := fillRetirableS1(t, layout, "b")
+	defer retire2()
+	if pc2 == pc1 {
+		t.Fatal("retired slot reused without a sweep")
 	}
 }

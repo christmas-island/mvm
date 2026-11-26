@@ -101,6 +101,9 @@ func newInterp(t testing.TB, stdout *bytes.Buffer, extra ...map[string]map[strin
 // Far more distinct programs than any pool holds load, run and close in one
 // process: CloseAndRelease makes their slots available to the next program.
 func TestCloseAndReleaseDistinctPrograms(t *testing.T) {
+	if err := stubs.SweepAvailable(); err != nil {
+		t.Skip(err)
+	}
 	n := 5000
 	if testing.Short() {
 		n = 300 // still past the 128 that S2/S9/S10 hold without reuse
@@ -132,11 +135,49 @@ func TestCloseAndReleaseDistinctPrograms(t *testing.T) {
 	t.Logf("%d programs: %d sweeps, %d slots swept, %v sweeping", n, sweeps-sweeps0, slots, total)
 }
 
+// Programs load, run and close concurrently, with sweeps (when the build has
+// them) racing the loads of other goroutines.
+func TestCloseAndReleaseConcurrent(t *testing.T) {
+	const workers = 8
+	per := 100 // 800 programs: several sweeps
+	if stubs.SweepAvailable() != nil || testing.Short() {
+		per = 10 // 80 programs fit the pools without a sweep
+	}
+	errs := make(chan error, workers)
+	for w := range workers {
+		go func() {
+			for j := range per {
+				k := 100000 + w*per + j
+				var stdout bytes.Buffer
+				i := newInterp(t, &stdout)
+				if _, err := i.Eval("distinct.go", distinctSrc(k)); err != nil {
+					errs <- fmt.Errorf("program %d: %w", k, err)
+					return
+				}
+				if got, want := stdout.String(), distinctWant(k); got != want {
+					errs <- fmt.Errorf("program %d: got %q, want %q", k, got, want)
+					return
+				}
+				i.CloseAndRelease()
+			}
+			errs <- nil
+		}()
+	}
+	for range workers {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
+	}
+}
+
 // A value the host keeps past CloseAndRelease must not run the method of the
 // program that takes its slot next (a type of another layout, whose method
 // would misread the stale value's memory): every call through its type, an
 // itab or reflect panics with ErrStaleMethodCall.
 func TestCloseAndReleaseStaleValue(t *testing.T) {
+	if err := stubs.SweepAvailable(); err != nil {
+		t.Skip(err)
+	}
 	var kept []any
 	sink := map[string]map[string]reflect.Value{
 		"example.com/sink": {"Put": reflect.ValueOf(func(v any) { kept = append(kept, v) })},
