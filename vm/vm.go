@@ -2722,16 +2722,20 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 					break
 				}
 			}
-			abortIdx, stopIdx := -1, -1
+			// A blocking select also waits for the interpreter's halt channel
+			// (interrupt or goroutine fault), tried without blocking first so
+			// a ready select costs a default case.
+			c := m.control()
+			abortIdx, haltIdx := -1, -1
 			n := ncase
-			if !hasDefault && m.watchFault() {
-				abortIdx = n
-				n++
-			}
-			stop := m.stopChan()
-			if !hasDefault && stop != nil {
-				stopIdx = n
-				n++
+			if !hasDefault {
+				if c != nil {
+					haltIdx = n
+					n++
+				} else if m.watchFault() {
+					abortIdx = n
+					n++
+				}
 			}
 			cases := make([]reflect.SelectCase, n)
 			idx := base
@@ -2748,18 +2752,29 @@ func (m *Machine) runLoop(traceFlags uint8, panicAddr, deferRetAddr int, deferRe
 					cases[i] = reflect.SelectCase{Dir: reflect.SelectDefault}
 				}
 			}
-			if abortIdx >= 0 {
+			var chosen int
+			var recv reflect.Value
+			var recvOK bool
+			switch {
+			case haltIdx >= 0:
+				cases[haltIdx] = reflect.SelectCase{Dir: reflect.SelectDefault}
+				if chosen, recv, recvOK = reflect.Select(cases); chosen == haltIdx {
+					cases[haltIdx] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: c.haltV}
+					if chosen, recv, recvOK = reflect.Select(cases); chosen == haltIdx {
+						m.halted()
+						cases[haltIdx].Chan = c.stopV
+						if chosen, recv, recvOK = reflect.Select(cases); chosen == haltIdx {
+							panic(ErrInterrupted)
+						}
+					}
+				}
+			case abortIdx >= 0:
 				cases[abortIdx] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.fault.abort)}
-			}
-			if stopIdx >= 0 {
-				cases[stopIdx] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(stop)}
-			}
-			chosen, recv, recvOK := reflect.Select(cases)
-			if chosen == abortIdx {
-				panic(ErrGoroutineFault)
-			}
-			if chosen == stopIdx {
-				panic(ErrInterrupted)
+				if chosen, recv, recvOK = reflect.Select(cases); chosen == abortIdx {
+					panic(ErrGoroutineFault)
+				}
+			default:
+				chosen, recv, recvOK = reflect.Select(cases)
 			}
 			sp = base
 			ci := meta.Cases[chosen]
@@ -5489,6 +5504,7 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 
 	if m.fault == nil {
 		m.fault = newGoroutineFault(m.err, m.faultContinue)
+		m.linkFault()
 	}
 	m.fault.spawned.Store(true)
 	child := &Machine{

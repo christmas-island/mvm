@@ -2,6 +2,7 @@ package vm
 
 import (
 	"reflect"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,9 @@ import (
 // syncPollMax bounds how long a waiter sleeps between two tries when no
 // interpreted unlock wakes it.
 const syncPollMax = time.Millisecond
+
+// syncSpins is how many times a waiter yields and retries before it sleeps.
+const syncSpins = 4
 
 // wgStateOff is the offset of sync.WaitGroup's state word (counter in the
 // high 32 bits), or -1 when the layout is not the expected one, in which case
@@ -126,6 +130,14 @@ func syncRecvPtr(recv reflect.Value) unsafe.Pointer {
 func (c *control) waitUntil(try func() bool) {
 	if try() {
 		return
+	}
+	// Contended locks are usually released within microseconds: yield a few
+	// times before sleeping, as the runtime's mutex spins before it parks.
+	for range syncSpins {
+		runtime.Gosched()
+		if try() {
+			return
+		}
 	}
 	c.waiters.Add(1)
 	defer c.waiters.Add(-1)
