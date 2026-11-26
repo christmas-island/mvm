@@ -511,8 +511,9 @@ var errorIface = reflect.TypeFor[error]()
 
 // RaiseIfInterpPanic re-raises err as its raw interpreter panic value when err
 // wraps a PanicError, so a native recover sees the original; otherwise it returns,
-// letting the caller surface err as an ordinary error result. Used by out-of-vm
-// synth shape handlers that re-enter the interpreter.
+// letting the caller surface err as an ordinary error result. Out-of-vm synth
+// shape handlers use SynthCall.RaiseIfPanic, which also records a panic that
+// nothing on the goroutine would recover (callback_panic.go).
 func RaiseIfInterpPanic(err error) {
 	var pe *PanicError
 	if errors.As(err, &pe) {
@@ -520,12 +521,17 @@ func RaiseIfInterpPanic(err error) {
 	}
 }
 
-func raiseMethodErr(err error) {
+// Raise raises err, returned by Invoke, as a panic; on a goroutine where
+// nothing would recover it, it records it instead and returns.
+func (c SynthCall) Raise(err error) { c.m.raiseCallback(err) }
+
+// RaiseIfPanic is RaiseIfInterpPanic for c's interpreter: on a goroutine
+// where nothing would recover the panic, it records it instead and returns.
+func (c SynthCall) RaiseIfPanic(err error) {
 	var pe *PanicError
 	if errors.As(err, &pe) {
-		panic(reraisedPanic{pe})
+		c.m.raiseCallback(err)
 	}
-	panic(err)
 }
 
 // ReflectToError unboxes v to an error, treating a typed-nil as nil.
@@ -590,7 +596,21 @@ func callMethod(
 		// turn an error into zero results.
 		panic(err)
 	}
+	if isProgramPanic(err) {
+		// Raise the program's panic (or os.Exit) here too: a panic in a
+		// method native code calls propagates through it, as in Go.
+		rs.raiseCallback(err)
+		return zeroResults(methodSig), nil
+	}
 	return out, err
+}
+
+// isProgramPanic reports whether err, returned by a callback's run, is the
+// program panicking or exiting rather than a failure to dispatch it.
+func isProgramPanic(err error) bool {
+	var pe *PanicError
+	var ce CleanExit
+	return errors.As(err, &pe) || errors.As(err, &ce)
 }
 
 func (m *Machine) callPromotedConcrete(

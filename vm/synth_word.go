@@ -48,7 +48,7 @@ func (m *Machine) makeWordCoreRegabi(t *mtype.Type, method mtype.Method, name st
 		out, err := callMethod(m, t, name, rv, method, methodSig, argv)
 		if err != nil {
 			if !swallowErr {
-				raiseMethodErr(err)
+				m.raiseCallback(err)
 			}
 			out = nil // zero result words
 		}
@@ -68,7 +68,7 @@ func (m *Machine) makeWordCoreABI0(t *mtype.Type, method mtype.Method, name stri
 		out, err := callMethod(m, t, name, rv, method, methodSig, argv)
 		if err != nil {
 			if !swallowErr {
-				raiseMethodErr(err)
+				m.raiseCallback(err)
 			}
 			out = nil // zero result words
 		}
