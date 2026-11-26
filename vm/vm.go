@@ -5442,6 +5442,7 @@ func (m *Machine) newGoroutine(fval Value, args []Value, spread bool) (panicked 
 		}
 		if m.fault == nil {
 			m.fault = newGoroutineFault(m.err, m.faultContinue)
+			m.linkFault()
 		}
 		fault := m.fault
 		go func() {
