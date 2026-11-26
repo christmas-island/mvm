@@ -165,7 +165,7 @@ var wordShapes = []wordShape{
 	{Params: "pppii", Results: "pp", Size: 64},
 	{Params: "pppii", Results: "ppp", Size: 64},
 	{Params: "pppipii", Results: "", Size: 64},
-	{Params: "pppp", Results: "", Size: 64},
+	{Params: "pppp", Results: "", Size: 256}, // goldmark/extension (GFM) attaches ~82 in one load
 	{Params: "pppp", Results: "ppi", Size: 64},
 	{Params: "ppppp", Results: "", Size: 64},
 	{Params: "pppppii", Results: "i", Size: 128},
