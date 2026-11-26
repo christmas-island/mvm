@@ -466,6 +466,7 @@ func LookupReservation(t *mtype.Type) *SynthReservation {
 func SetValueReservation(t *mtype.Type, value *runtype.Reservation) {
 	derivedMu.Lock()
 	defer derivedMu.Unlock()
+	own(t)
 	reservations[t] = &SynthReservation{value: value}
 }
 
@@ -584,6 +585,7 @@ func reserveNamedCarrier(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 		}
 		sharedCarriers[key] = res
 	}
+	own(t)
 	reservations[t] = res
 	return res.value.Type()
 }
@@ -598,6 +600,7 @@ func reserveValueAndPtr(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 			cacheKey = MethodStructKey{name: QualifiedTypeName(t), pkgPath: RtypePkgPath(t), layoutSig: layoutRT.String(), methodSig: methodFingerprint(t)}
 			derivedMu.Lock()
 			if shared := (*cachep)[cacheKey]; shared != nil {
+				own(t)
 				reservations[t] = shared
 				derivedMu.Unlock()
 				return adoptShared(t, shared)
@@ -610,6 +613,7 @@ func reserveValueAndPtr(t *mtype.Type, layoutRT reflect.Type) reflect.Type {
 		return layoutRT
 	}
 	derivedMu.Lock()
+	own(t)
 	reservations[t] = res
 	if cachep != nil {
 		if *cachep == nil {
@@ -654,6 +658,7 @@ func maybeReserveStruct(t *mtype.Type) (rt reflect.Type, handled bool) {
 			return nil, false
 		}
 		derivedMu.Lock()
+		own(t)
 		reservations[t] = res
 		derivedMu.Unlock()
 	}
@@ -735,6 +740,7 @@ func shareOrFill(t *mtype.Type, reserved, realLayout reflect.Type,
 ) reflect.Type {
 	derivedMu.Lock()
 	if shared := lookup(); shared != nil {
+		own(t)
 		reservations[t] = shared
 		derivedMu.Unlock()
 		materializing.clear(reserved)
@@ -768,6 +774,7 @@ func ensureDerived(t *mtype.Type) *derivedTypes {
 	d := derivedCache[t]
 	if d == nil {
 		d = &derivedTypes{}
+		own(t)
 		derivedCache[t] = d
 	}
 	return d
@@ -1362,6 +1369,7 @@ func reserveSelfRef(t *mtype.Type, donor reflect.Type) reflect.Type {
 		return nil
 	}
 	derivedMu.Lock()
+	own(t)
 	reservations[t] = res
 	derivedMu.Unlock()
 	return res.value.Type()

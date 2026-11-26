@@ -31,7 +31,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/mvm-sh/mvm/internal/derive"
 	"github.com/mvm-sh/mvm/interp"
 	"github.com/mvm-sh/mvm/lang/golang"
 	"github.com/mvm-sh/mvm/modfs"
@@ -99,7 +101,12 @@ type sample struct {
 }
 
 func settle() sample {
-	runtime.GC()
+	// Cleanups (Close's cache pruning) run after a GC finds an interpreter
+	// unreachable; give them a moment, then collect what they released.
+	for range 3 {
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
 	runtime.GC()
 	debug.FreeOSMemory()
 	var s sample
@@ -254,8 +261,10 @@ func TestMemProbe(t *testing.T) {
 		before := collected.Load()
 		r := probe(t, x.w, mode, x.warm, x.n, profdir)
 		results = append(results, r)
-		t.Logf("%s: %d loads (%s), %d interpreters collected; heap %.1f KiB/load, RSS %.1f KiB/load",
-			r.name, r.loads, r.mode, collected.Load()-before, r.heapPerLoad(), r.rssPerLoad())
+		res, der, sif := derive.CacheSizes()
+		t.Logf("%s: %d loads (%s), %d interpreters collected; heap %.1f KiB/load, RSS %.1f KiB/load; "+
+			"derive caches now %d reservations, %d derived, %d synth ifaces",
+			r.name, r.loads, r.mode, collected.Load()-before, r.heapPerLoad(), r.rssPerLoad(), res, der, sif)
 	}
 	var b strings.Builder
 	b.WriteString("\n| KiB per load |")
