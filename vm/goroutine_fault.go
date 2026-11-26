@@ -84,29 +84,57 @@ func (m *Machine) GoroutineFault() error {
 	return m.fault.pending()
 }
 
+// chanRecv receives from ch for the ChanRecv opcode. A receive that would
+// block also waits for the interrupt (interrupt.go) and, once a goroutine was
+// started, for a goroutine fault, so it cannot outlive either.
 func (m *Machine) chanRecv(ch reflect.Value) (reflect.Value, bool) {
-	if !m.watchFault() {
+	stop, fault := m.stopChan(), m.watchFault()
+	if stop == nil && !fault {
 		return ch.Recv()
 	}
-	chosen, v, ok := reflect.Select([]reflect.SelectCase{
+	if v, ok := ch.TryRecv(); v.IsValid() {
+		return v, ok
+	}
+	cases := []reflect.SelectCase{
 		{Dir: reflect.SelectRecv, Chan: ch},
-		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.fault.abort)},
-	})
-	if chosen == 1 {
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(stop)},
+		{Dir: reflect.SelectRecv},
+	}
+	if fault {
+		cases[2].Chan = reflect.ValueOf(m.fault.abort)
+	}
+	chosen, v, ok := reflect.Select(cases)
+	switch chosen {
+	case 1:
+		panic(ErrInterrupted)
+	case 2:
 		panic(ErrGoroutineFault)
 	}
 	return v, ok
 }
 
+// chanSend sends v on ch for the ChanSend opcode; see chanRecv.
 func (m *Machine) chanSend(ch, v reflect.Value) {
-	if !m.watchFault() {
+	stop, fault := m.stopChan(), m.watchFault()
+	if stop == nil && !fault {
 		ch.Send(v)
 		return
 	}
-	if chosen, _, _ := reflect.Select([]reflect.SelectCase{
+	if ch.TrySend(v) {
+		return
+	}
+	cases := []reflect.SelectCase{
 		{Dir: reflect.SelectSend, Chan: ch, Send: v},
-		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.fault.abort)},
-	}); chosen == 1 {
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(stop)},
+		{Dir: reflect.SelectRecv},
+	}
+	if fault {
+		cases[2].Chan = reflect.ValueOf(m.fault.abort)
+	}
+	switch chosen, _, _ := reflect.Select(cases); chosen {
+	case 1:
+		panic(ErrInterrupted)
+	case 2:
 		panic(ErrGoroutineFault)
 	}
 }
