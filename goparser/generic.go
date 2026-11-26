@@ -986,6 +986,10 @@ func (p *Parser) inferTypeArgs(tmpl *genericTemplate, genSym *symbol.Symbol, cal
 	return typeArgs, nil
 }
 
+func isPtrToArray(t *mtype.Type) bool {
+	return t.Kind() == reflect.Pointer && t.Elem() != nil && t.Elem().Kind() == reflect.Array
+}
+
 func (p *Parser) inferExprType(toks Tokens) *mtype.Type {
 	postfix, err := p.parseExpr(toks, "")
 	if err != nil || len(postfix) == 0 {
@@ -1305,6 +1309,9 @@ func (p *Parser) postfixType(in Tokens) (*mtype.Type, int) {
 		if containerTyp == nil {
 			return nil, 0
 		}
+		if isPtrToArray(containerTyp) {
+			containerTyp = containerTyp.Elem() // p[i] indexes the pointed-to array
+		}
 		switch containerTyp.Kind() {
 		case reflect.Slice, reflect.Array, reflect.Map:
 			return containerTyp.Elem(), 1 + il + cl
@@ -1335,6 +1342,9 @@ func (p *Parser) postfixType(in Tokens) (*mtype.Type, int) {
 			return nil, 0
 		}
 		total += cl
+		if isPtrToArray(containerTyp) {
+			containerTyp = containerTyp.Elem() // p[lo:hi] slices the pointed-to array
+		}
 		switch containerTyp.Kind() {
 		case reflect.Slice, reflect.String:
 			return containerTyp, total
