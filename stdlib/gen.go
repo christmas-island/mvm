@@ -47,6 +47,7 @@ package stdlib
 //go:generate go run ../cmd/extract -stdlib crypto/hpke $GOROOT/src/crypto/hpke
 //go:generate go run ../cmd/extract -stdlib crypto/md5 $GOROOT/src/crypto/md5
 //go:generate go run ../cmd/extract -stdlib crypto/mlkem $GOROOT/src/crypto/mlkem
+//go:generate go run ../cmd/extract -stdlib crypto/mlkem/mlkemtest $GOROOT/src/crypto/mlkem/mlkemtest
 //go:generate go run ../cmd/extract -stdlib crypto/pbkdf2 $GOROOT/src/crypto/pbkdf2
 //go:generate go run ../cmd/extract -stdlib crypto/rand $GOROOT/src/crypto/rand
 //go:generate go run ../cmd/extract -stdlib crypto/rc4 $GOROOT/src/crypto/rc4
